@@ -3,8 +3,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fakeredis.aioredis import FakeRedis
 
-from app.ai.assistant import CLARIFICATION_TEXT, TRANSCRIPTION_ERROR_TEXT, AssistantService
+from app.ai.assistant import (
+    CLARIFICATION_TEXT,
+    LLM_DISABLED_TEXT,
+    TRANSCRIPTION_ERROR_TEXT,
+    AssistantService,
+)
 from app.ai.llm.gigachat_client import ChatCompletion, FunctionCall
+from app.ai.llm.tool_executor import ToolExecutor
 from app.core.config import Settings
 from app.domain.enums import EventStatus, Period, Platform
 from app.repositories.event_repository import EventRepository
@@ -137,29 +143,19 @@ async def test_tool_error_without_model_answer_is_shown(session_factory, cloud_s
     assert response.needs_clarification is True
 
 
-async def test_local_mode_works_without_llm(session_factory, session, settings):
+async def test_requests_without_llm_return_configuration_hint(session_factory, settings):
     assistant = AssistantService(session_factory, settings)
 
     response = await assistant.handle_text(Platform.WEB, "web-demo", "Напомни завтра в 10 позвонить Ивану")
 
-    assert response.intent == "create_task"
-    assert response.text.startswith("Создал напоминание")
-    assert len(response.events) == 1
-    user = await UserRepository(session).get_by_external_id(Platform.WEB, "web-demo")
-    assert user is not None
+    assert response.text == LLM_DISABLED_TEXT
+    assert response.events == []
+    assert response.intent is None
 
 
-async def test_local_mode_asks_for_missing_meeting_time(session_factory, settings):
-    assistant = AssistantService(session_factory, settings)
-
-    response = await assistant.handle_text(Platform.WEB, "web-demo", "Добавь встречу с командой завтра")
-
-    assert response.needs_clarification is True
-    assert response.text == "На какое время поставить встречу?"
-
-
-async def test_unrelated_text_gets_clarification(session_factory, settings):
-    assistant = AssistantService(session_factory, settings)
+async def test_unrelated_text_gets_clarification(session_factory, cloud_settings):
+    llm = FakeLLM(ChatCompletion(content=CLARIFICATION_TEXT))
+    assistant = AssistantService(session_factory, cloud_settings, llm=llm)
 
     response = await assistant.handle_text(Platform.WEB, "web-demo", "Привет")
 
@@ -167,12 +163,12 @@ async def test_unrelated_text_gets_clarification(session_factory, settings):
     assert response.needs_clarification is True
 
 
-async def test_voice_request_returns_synthesised_answer(session_factory, settings):
+async def test_voice_request_returns_synthesised_answer(session_factory, cloud_settings):
     tts = FakeTTS()
-    settings = settings.model_copy(update={"sber_tts_credentials": "test-credentials"})
     assistant = AssistantService(
         session_factory,
-        settings,
+        cloud_settings,
+        llm=FakeLLM(ChatCompletion(content="Поставил задачу.")),
         stt=FakeSTT("Поставь задачу купить билеты"),
         tts=tts,
         converter=FakeConverter(),
@@ -180,6 +176,7 @@ async def test_voice_request_returns_synthesised_answer(session_factory, setting
 
     response = await assistant.handle_voice(Platform.TELEGRAM, "42", b"ogg-bytes", source_format="ogg")
 
+    assert response.text == "Поставил задачу."
     assert response.audio == b"opus-bytes"
     assert response.audio_format == "opus"
     assert tts.calls and tts.calls[0][0] == response.text
@@ -193,10 +190,17 @@ async def test_empty_voice_returns_error(session_factory, settings):
     assert response.text == TRANSCRIPTION_ERROR_TEXT
 
 
-async def test_list_and_complete_events(session_factory, settings):
-    assistant = AssistantService(session_factory, settings)
-    await assistant.handle_text(Platform.WEB, "web-demo", "Поставь задачу купить билеты")
+async def test_list_and_complete_events(session_factory, session, settings):
+    user = await UserRepository(session).get_or_create(Platform.WEB, "web-demo")
+    executor = ToolExecutor(session, user, settings)
+    start = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=1)
+    result = await executor.execute(
+        "create_task", {"title": "Купить билеты", "starts_at": start.isoformat()}
+    )
+    assert result.events
+    await session.commit()
 
+    assistant = AssistantService(session_factory, settings)
     events = await assistant.list_events(Platform.WEB, "web-demo", Period.ALL)
     assert [event.title for event in events] == ["Купить билеты"]
 
@@ -251,6 +255,7 @@ async def test_telegram_voice_is_always_opus(session_factory, settings):
     assistant = AssistantService(
         session_factory,
         settings,
+        llm=FakeLLM(ChatCompletion(content="Поставил задачу.")),
         stt=FakeSTT("Поставь задачу купить билеты"),
         tts=tts,
         converter=FakeConverter(),
@@ -268,6 +273,7 @@ async def test_web_voice_normalises_wav16_format(session_factory, settings):
     assistant = AssistantService(
         session_factory,
         settings,
+        llm=FakeLLM(ChatCompletion(content="Поставил задачу.")),
         stt=FakeSTT("Поставь задачу купить билеты"),
         tts=tts,
         converter=FakeConverter(),

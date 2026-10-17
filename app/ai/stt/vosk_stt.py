@@ -69,6 +69,7 @@ class VoskSpeechRecognizer:
 
     def _load_model(self) -> vosk.Model:
         log.info("loading Vosk model from %s", self._model_path)
+        vosk.SetLogLevel(-1)
         try:
             return vosk.Model(str(self._model_path))
         except Exception as exc:

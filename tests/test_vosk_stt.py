@@ -84,3 +84,15 @@ async def test_real_model_returns_no_speech_for_silence() -> None:
 
     with pytest.raises(TranscriptionError, match="речь не распознана"):
         await recognizer.transcribe(_silent_wav(seconds=0.3))
+
+
+@pytest.mark.skipif(not MODEL_PATH.is_dir(), reason="Vosk model is not downloaded")
+async def test_real_model_streams_silence_to_empty_result() -> None:
+    recognizer = VoskSpeechRecognizer(str(MODEL_PATH))
+    session = await recognizer.open_stream()
+    try:
+        for _ in range(10):
+            await session.feed(b"\x00\x00" * 320)
+        assert await session.finish() == ""
+    finally:
+        await session.close()

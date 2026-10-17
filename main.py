@@ -99,6 +99,11 @@ class Application:
             self.settings.max_enabled,
             self.settings.enable_scheduler,
         )
+        if not self.assistant.llm_enabled:
+            log.warning(
+                "GigaChat is not configured: set GIGACHAT_CREDENTIALS, "
+                "otherwise every request returns a setup hint"
+            )
 
     async def stop(self) -> None:
         self._stopping = True

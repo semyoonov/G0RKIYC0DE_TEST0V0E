@@ -4,7 +4,6 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.llm.gigachat_client import ChatCompletion
-from app.ai.llm.local_interpreter import LocalInterpreter
 from app.ai.llm.prompts import build_system_prompt
 from app.ai.llm.tool_executor import ERROR_PREFIX, ToolExecutor, to_read
 from app.ai.llm.tools import TOOLS_SCHEMA
@@ -26,6 +25,9 @@ CLARIFICATION_TEXT = (
 )
 ERROR_TEXT = "Не получилось обработать запрос. Попробуйте ещё раз."
 TRANSCRIPTION_ERROR_TEXT = "Не удалось распознать речь. Запишите сообщение ещё раз или напишите текстом."
+LLM_DISABLED_TEXT = (
+    "GigaChat не настроен: задайте GIGACHAT_CREDENTIALS, чтобы ассистент отвечал на запросы."
+)
 
 _ID_MARKER_RE = re.compile(r"\s*\[id \d+\]")
 _BLOCKED_FINISH_REASONS = frozenset({"blacklist", "content_filter", "sensitive"})
@@ -86,7 +88,6 @@ class AssistantService:
         self._tts = tts
         self._converter = converter
         self._cache = cache
-        self._interpreter = LocalInterpreter(settings.tz)
 
     @property
     def llm_enabled(self) -> bool:
@@ -104,6 +105,8 @@ class AssistantService:
         normalized = " ".join((text or "").split())
         if not normalized:
             return AssistantResponse(text=CLARIFICATION_TEXT, needs_clarification=True)
+        if self._llm is None:
+            return AssistantResponse(text=LLM_DISABLED_TEXT)
         try:
             response = await self._process(platform, external_user_id, normalized)
         except AssistantError as error:
@@ -128,6 +131,8 @@ class AssistantService:
     ) -> AssistantResponse:
         if not audio:
             return AssistantResponse(text=TRANSCRIPTION_ERROR_TEXT)
+        if self._llm is None:
+            return AssistantResponse(text=LLM_DISABLED_TEXT)
         if self._stt is None:
             return AssistantResponse(text="Распознавание речи недоступно. Напишите запрос текстом.")
         try:
@@ -209,10 +214,7 @@ class AssistantService:
             executor = ToolExecutor(session, user, self._settings, self._cache)
             # End the read transaction so the connection is not held during model and messenger calls.
             await session.commit()
-            if self.llm_enabled:
-                answer, events, intent = await self._run_llm(user.id, text, executor)
-            else:
-                answer, events, intent = await self._run_local(text, executor)
+            answer, events, intent = await self._run_llm(user.id, text, executor)
         return AssistantResponse(
             text=_humanize(answer),
             events=events,
@@ -271,18 +273,6 @@ class AssistantService:
             answer = self._strip_error(last_tool_content) if last_tool_content else CLARIFICATION_TEXT
         await self._save_history(user_id, text, answer)
         return answer, collected, intent
-
-    async def _run_local(
-        self,
-        text: str,
-        executor: ToolExecutor,
-    ) -> tuple[str, list[EventRead], str | None]:
-        action = self._interpreter.interpret(text)
-        if action is None:
-            return CLARIFICATION_TEXT, [], None
-        result = await executor.execute(action.tool, action.arguments)
-        answer = self._strip_error(result.content)
-        return answer, result.events, action.tool
 
     @staticmethod
     def _strip_error(content: str) -> str:
