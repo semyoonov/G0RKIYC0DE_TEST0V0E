@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from app.db.models.account_link import AccountLink
 from app.db.models.user import User
 from app.domain.enums import Platform
 from app.repositories.base import BaseRepository
@@ -13,6 +14,22 @@ class UserRepository(BaseRepository[User]):
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def resolve(self, platform: Platform, external_id: str) -> User | None:
+        """The account behind an identity: its own row, or the account it was linked to."""
+        user = await self.get_by_external_id(platform, external_id)
+        if user is not None:
+            return user
+        result = await self.session.execute(
+            select(AccountLink).where(
+                AccountLink.platform == platform,
+                AccountLink.external_id == external_id,
+            )
+        )
+        link = result.scalar_one_or_none()
+        if link is None:
+            return None
+        return await self.session.get(User, link.user_id)
+
     async def get_or_create(
         self,
         platform: Platform,
@@ -20,7 +37,7 @@ class UserRepository(BaseRepository[User]):
         username: str | None = None,
         timezone: str | None = None,
     ) -> User:
-        user = await self.get_by_external_id(platform, external_id)
+        user = await self.resolve(platform, external_id)
         if user is None:
             user = User(
                 platform=platform,

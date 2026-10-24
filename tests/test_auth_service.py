@@ -10,6 +10,7 @@ from app.db.models.event import Event
 from app.domain.enums import EventStatus, EventType, Platform
 from app.domain.identity import Identity
 from app.repositories.account_repository import AccountRepository, LinkCodeError
+from app.repositories.user_repository import UserRepository
 from app.services.auth.service import AuthService
 from app.services.auth.tokens import SessionTokenError, SessionTokens
 from test_auth_launch import (
@@ -142,6 +143,25 @@ async def test_redeem_moves_history_to_the_bot_account(auth: AuthService, sessio
         assert [row.title for row in rows.all()] == ["Купить билеты"]
         leftover = (await session.execute(select(Event).where(Event.user_id == web_session.user_id))).scalars()
         assert leftover.all() == []
+
+
+async def test_linked_identity_resolves_through_the_user_repository(
+    auth: AuthService,
+    session_factory,
+) -> None:
+    owner = await auth.open_session(Platform.TELEGRAM, telegram_init_data())
+    issued = await auth.issue_link_code(Identity(Platform.TELEGRAM, "42"))
+    guest = await auth.open_session(Platform.WEB, client_id="web-linked")
+    await auth.redeem(Identity(Platform.WEB, "web-linked"), issued["code"])
+
+    async with session_factory() as session:
+        repository = UserRepository(session)
+        resolved = await repository.get_or_create(Platform.WEB, "web-linked")
+        stranger = await repository.get_or_create(Platform.WEB, "web-unlinked")
+
+    assert resolved.id == owner.user_id
+    assert resolved.id != guest.user_id
+    assert stranger.id != owner.user_id
 
 
 async def test_redeem_rejects_used_and_unknown_codes(auth: AuthService) -> None:
