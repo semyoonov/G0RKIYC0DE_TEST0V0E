@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -95,6 +96,7 @@ async def test_tool_call_round_trip_persists_event(session_factory, session, clo
     assert follow_up[-1]["role"] == "function"
     assert follow_up[-2]["function_call"]["name"] == "create_task"
     assert "позвонить Ивану" in follow_up[-1]["content"]
+    assert json.loads(follow_up[-1]["content"])["result"].startswith("Создал")
 
     user = await UserRepository(session).get_by_external_id(Platform.WEB, "web-demo")
     assert user is not None

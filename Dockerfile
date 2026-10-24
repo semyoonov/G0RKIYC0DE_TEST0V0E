@@ -30,7 +30,8 @@ RUN curl -fsSL "$RUSSIAN_CA_URL" -o /usr/local/share/ca-certificates/russian_tru
 WORKDIR /app
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -c "import certifi, pathlib; bundle = pathlib.Path(certifi.where()); extra = pathlib.Path('/usr/local/share/ca-certificates/russian_trusted_root_ca.crt').read_text().strip(); bundle.write_text(bundle.read_text() + chr(10) + extra + chr(10))"
 
 COPY . .
 COPY --from=frontend /app/frontend/dist ./frontend/dist

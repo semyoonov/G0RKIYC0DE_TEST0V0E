@@ -1,3 +1,4 @@
+import json
 import re
 from typing import Any, Protocol
 
@@ -267,7 +268,14 @@ class AssistantService:
             intent = call.name
             collected.extend(result.events)
             last_tool_content = result.content
-            messages.append({"role": "function", "name": call.name, "content": result.content})
+            messages.append(
+                {
+                    "role": "function",
+                    "name": call.name,
+                    # GigaChat rejects a plain sentence here: the function reply must be JSON.
+                    "content": json.dumps({"result": result.content}, ensure_ascii=False),
+                }
+            )
 
         if not answer:
             answer = self._strip_error(last_tool_content) if last_tool_content else CLARIFICATION_TEXT
