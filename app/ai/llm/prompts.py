@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.core.timeutils import ensure_aware, format_datetime, utcnow
@@ -8,16 +8,30 @@ from app.domain.models import EventRead
 _WEEKDAYS_RU = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
 
 
+def _human_day(moment: datetime) -> str:
+    return f"{moment.strftime('%d.%m.%Y')}, {_WEEKDAYS_RU[moment.weekday()]}"
+
+
 def build_system_prompt(tz: ZoneInfo, now: datetime | None = None) -> str:
     current = ensure_aware(now or utcnow()).astimezone(tz)
-    human = f"{current.strftime('%d.%m.%Y')}, {_WEEKDAYS_RU[current.weekday()]}, {current.strftime('%H:%M')}"
+    human = f"{_human_day(current)}, {current.strftime('%H:%M')}"
+    tomorrow = current + timedelta(days=1)
+    after_tomorrow = current + timedelta(days=2)
+    week_start = current - timedelta(days=current.weekday())
+    next_week_start = week_start + timedelta(days=7)
     return (
         "Ты — ассистент, который ведёт личные задачи, напоминания и встречи пользователя.\n"
-        f"Сейчас {human} (часовой пояс {tz.key}).\n\n"
+        f"Сейчас {human} (часовой пояс {tz.key}).\n"
+        f"Опорные даты: сегодня {_human_day(current)}, завтра {_human_day(tomorrow)}, "
+        f"послезавтра {_human_day(after_tomorrow)}; эта неделя {week_start.strftime('%d.%m')}–"
+        f"{(week_start + timedelta(days=6)).strftime('%d.%m')}, следующая {next_week_start.strftime('%d.%m')}–"
+        f"{(next_week_start + timedelta(days=6)).strftime('%d.%m')}. "
+        "Бери даты из этого списка, не вычисляй их сам.\n\n"
         "Правила:\n"
         "1. Данные о событиях бери только из инструментов. Не придумывай события и их идентификаторы.\n"
         "2. Относительные даты («завтра», «в пятницу», «через час») переводи в абсолютные от текущего момента "
-        "и передавай в ISO 8601 с часовым поясом.\n"
+        "и передавай в ISO 8601 с часовым поясом. Для «завтра» бери дату из опорных дат: неверный месяц или год "
+        "хуже, чем пропущенное поле.\n"
         "3. Встреча без времени не создаётся: если время не названо, задай один короткий вопрос и не вызывай инструмент.\n"
         "4. Задачу можно создать без даты. Напоминание требует времени напоминания.\n"
         "5. Если ответ инструмента начинается с «ОШИБКА», не пересказывай её пользователю: задай уточняющий вопрос "
