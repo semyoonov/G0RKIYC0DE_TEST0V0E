@@ -18,8 +18,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip \
+    && apt-get install -y --no-install-recommends ffmpeg espeak-ng ca-certificates curl unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# GigaChat, SaluteSpeech и MAX Bot API подписаны Russian Trusted Root CA; без него
+# TLS-проверка к этим хостам падает, и пришлось бы отключать verify.
+ARG RUSSIAN_CA_URL=https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
+RUN curl -fsSL "$RUSSIAN_CA_URL" -o /usr/local/share/ca-certificates/russian_trusted_root_ca.crt \
+    && update-ca-certificates
 
 WORKDIR /app
 

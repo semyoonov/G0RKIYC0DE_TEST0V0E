@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchMeta } from "./lib/api";
 import { ChatMessage } from "./components/ChatMessage";
 import { Composer } from "./components/Composer";
+import { LinkPanel } from "./components/LinkPanel";
 import { LiveTranscript } from "./components/LiveTranscript";
 import { QuickActions } from "./components/QuickActions";
 import { useChat } from "./hooks/useChat";
@@ -74,6 +75,7 @@ export default function App() {
             <p className="text-xs text-ink-muted">Голосом или текстом</p>
           </div>
         </div>
+        <LinkPanel />
         <QuickActions
           actions={quickActions}
           disabled={composerDisabled || voice.recording}

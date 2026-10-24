@@ -10,6 +10,7 @@ from app.ai.assistant import AssistantService
 from app.ai.llm.gigachat_client import GigaChatClient
 from app.ai.stt.audio_converter import AudioConverter
 from app.ai.stt.vosk_stt import VoskSpeechRecognizer
+from app.ai.tts.local_tts import LocalTextToSpeech
 from app.ai.tts.sber_tts import SberTextToSpeech
 from app.core.config import Settings, get_settings
 from app.core.exceptions import AssistantError
@@ -48,7 +49,7 @@ class Application:
             ttl_seconds=self.settings.cache_ttl_seconds,
         )
         self.llm = GigaChatClient(self.settings) if self.settings.gigachat_enabled else None
-        self.tts = SberTextToSpeech(self.settings) if self.settings.tts_enabled else None
+        self.tts = self._build_tts()
         self.stt = VoskSpeechRecognizer(self.settings.vosk_model_path, self.settings.audio_sample_rate)
         self.converter = AudioConverter(
             self.settings.ffmpeg_binary,
@@ -78,6 +79,15 @@ class Application:
         self.max_reminder_client: MaxClient | None = None
         self._stopping = False
 
+    def _build_tts(self) -> SberTextToSpeech | LocalTextToSpeech | None:
+        settings = self.settings
+        if not settings.tts_enabled:
+            return None
+        use_sber = settings.tts_backend.strip().lower() == "sber" or (
+            settings.tts_backend.strip().lower() == "auto" and settings.sber_tts_available
+        )
+        return SberTextToSpeech(settings) if use_sber else LocalTextToSpeech(settings)
+
     async def start(self) -> None:
         if self.settings.auto_create_tables:
             await self.db.create_all()
@@ -99,9 +109,10 @@ class Application:
         except AssistantError as error:
             log.warning("vosk warmup failed: %s", error)
         log.info(
-            "assistant is up: llm=%s tts=%s telegram=%s vk=%s max=%s scheduler=%s",
+            "assistant is up: llm=%s tts=%s(%s) telegram=%s vk=%s max=%s scheduler=%s",
             self.assistant.llm_enabled,
             self.settings.tts_enabled,
+            type(self.tts).__name__ if self.tts is not None else "off",
             self.settings.telegram_enabled,
             self.settings.vk_enabled,
             self.settings.max_enabled,

@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     sber_tts_voice: str = "Nec_24000"
     sber_tts_format: str = "opus"
     sber_tts_timeout_seconds: float = 60.0
+    # auto: SaluteSpeech при наличии ключа, иначе локальный синтез; sber/local/off — принудительно
+    tts_backend: str = "auto"
+    local_tts_enabled: bool = False
+    local_tts_binary: str = "espeak-ng"
+    local_tts_voice: str = "ru"
+    local_tts_speed: int = 150
 
     vosk_model_path: str = "models/vosk-model-small-ru-0.22"
     ffmpeg_binary: str = "ffmpeg"
@@ -89,8 +95,19 @@ class Settings(BaseSettings):
         return bool(self.gigachat_credentials.strip())
 
     @property
-    def tts_enabled(self) -> bool:
+    def sber_tts_available(self) -> bool:
         return bool(self.sber_tts_credentials.strip())
+
+    @property
+    def tts_enabled(self) -> bool:
+        backend = self.tts_backend.strip().lower()
+        if backend == "off":
+            return False
+        if backend == "sber":
+            return self.sber_tts_available
+        if backend == "local":
+            return self.local_tts_enabled
+        return self.sber_tts_available or self.local_tts_enabled
 
     @property
     def telegram_enabled(self) -> bool:
