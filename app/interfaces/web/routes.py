@@ -5,7 +5,7 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
@@ -13,10 +13,12 @@ from app.core.exceptions import AssistantError, NotFoundError
 from app.core.logger import get_logger
 from app.domain.enums import EventStatus, Period, Platform
 from app.domain.models import AssistantResponse, EventRead
+from app.interfaces.web.auth_routes import identity_from_request
 
 if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
     from app.core.config import Settings
+    from app.services.auth.service import AuthService
 
 log = get_logger(__name__)
 
@@ -77,7 +79,25 @@ _FALLBACK_HTML = """<!doctype html>
 """
 
 
-def build_router(assistant: AssistantService, settings: Settings, dist_dir: Path | None = None) -> APIRouter:
+async def _conversation_owner(
+    request: Request,
+    auth: AuthService | None,
+    fallback_platform: Platform,
+    client_id: str,
+) -> tuple[Platform, str]:
+    """A signed session names the account; anonymous callers keep the legacy client id."""
+    identity = await identity_from_request(request, auth)
+    if identity is not None:
+        return identity.platform, identity.external_id
+    return fallback_platform, client_id
+
+
+def build_router(
+    assistant: AssistantService,
+    settings: Settings,
+    dist_dir: Path | None = None,
+    auth: AuthService | None = None,
+) -> APIRouter:
     router = APIRouter()
 
     @router.get("/", response_class=HTMLResponse)
@@ -93,14 +113,20 @@ def build_router(assistant: AssistantService, settings: Settings, dist_dir: Path
 
     @router.get("/api/meta")
     async def meta() -> dict[str, Any]:
-        return {"timezone": settings.timezone, "quick_actions": list(QUICK_ACTIONS)}
+        return {
+            "timezone": settings.timezone,
+            "quick_actions": list(QUICK_ACTIONS),
+            "mini_apps": settings.mini_app_links(),
+            "platforms": [platform.value for platform in Platform],
+        }
 
     @router.post("/api/chat")
-    async def chat(payload: ChatPayload) -> dict[str, Any]:
+    async def chat(payload: ChatPayload, request: Request) -> dict[str, Any]:
+        platform, external_id = await _conversation_owner(request, auth, Platform.WEB, payload.client_id)
         try:
             response = await assistant.handle_text(
-                Platform.WEB,
-                payload.client_id,
+                platform,
+                external_id,
                 payload.text,
                 speak=payload.speak,
             )
@@ -111,6 +137,7 @@ def build_router(assistant: AssistantService, settings: Settings, dist_dir: Path
 
     @router.post("/api/voice")
     async def voice(
+        request: Request,
         audio: UploadFile = File(...),
         client_id: str = Form(DEFAULT_CLIENT_ID, min_length=1, max_length=128),
     ) -> dict[str, Any]:
@@ -121,10 +148,11 @@ def build_router(assistant: AssistantService, settings: Settings, dist_dir: Path
             raise HTTPException(status_code=400, detail="Аудиофайл пустой")
         if len(data) > MAX_AUDIO_BYTES:
             raise HTTPException(status_code=413, detail="Аудиофайл больше 20 МБ")
+        platform, external_id = await _conversation_owner(request, auth, Platform.WEB, client_id)
         try:
             response = await assistant.handle_voice(
-                Platform.WEB,
-                client_id,
+                platform,
+                external_id,
                 data,
                 source_format=None,
                 speak=True,
@@ -136,11 +164,13 @@ def build_router(assistant: AssistantService, settings: Settings, dist_dir: Path
 
     @router.get("/api/events")
     async def list_events(
+        request: Request,
         client_id: str = Query(DEFAULT_CLIENT_ID, min_length=1, max_length=128),
         period: Period = Period.TODAY,
     ) -> dict[str, Any]:
+        platform, external_id = await _conversation_owner(request, auth, Platform.WEB, client_id)
         try:
-            events = await assistant.list_events(Platform.WEB, client_id, Period(period))
+            events = await assistant.list_events(platform, external_id, Period(period))
         except AssistantError as exc:
             log.exception("web events request failed")
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -149,10 +179,12 @@ def build_router(assistant: AssistantService, settings: Settings, dist_dir: Path
     @router.post("/api/events/{event_id}/complete")
     async def complete_event(
         event_id: int,
+        request: Request,
         client_id: str = Query(DEFAULT_CLIENT_ID, min_length=1, max_length=128),
     ) -> dict[str, Any]:
+        platform, external_id = await _conversation_owner(request, auth, Platform.WEB, client_id)
         try:
-            event = await assistant.set_event_status(Platform.WEB, client_id, event_id, EventStatus.DONE)
+            event = await assistant.set_event_status(platform, external_id, event_id, EventStatus.DONE)
         except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except AssistantError as exc:

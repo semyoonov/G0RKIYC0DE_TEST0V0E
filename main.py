@@ -20,8 +20,10 @@ from app.db.session import Database
 from app.domain.enums import EVENT_TYPE_TITLES, Platform
 from app.interfaces.max.bot import MaxBot, MaxClient
 from app.interfaces.telegram.bot import run_telegram_bot
+from app.interfaces.vk.bot import VkBot
 from app.interfaces.web.app import create_app
 from app.interfaces.web.ws import StreamingFactory
+from app.services.auth.service import AuthService
 from app.services.cache.redis_service import CacheService
 from app.services.scheduler.reminder_service import ReminderService
 
@@ -62,6 +64,7 @@ class Application:
             converter=self.converter,
             cache=self.cache,
         )
+        self.auth = AuthService(self.db.session_factory, self.settings)
         self.reminders = ReminderService(
             self.db.session_factory,
             poll_interval_seconds=self.settings.reminder_poll_seconds,
@@ -70,6 +73,7 @@ class Application:
         self.tasks: list[asyncio.Task[None]] = []
         self.server: uvicorn.Server | None = None
         self.max_bot: MaxBot | None = None
+        self.vk_bot: VkBot | None = None
         self.telegram_reminder_bot: Bot | None = None
         self.max_reminder_client: MaxClient | None = None
         self._stopping = False
@@ -81,8 +85,11 @@ class Application:
         if self.settings.telegram_enabled:
             self.tasks.append(asyncio.create_task(self._run_telegram(), name="telegram-bot"))
         if self.settings.max_enabled:
-            self.max_bot = MaxBot(self.assistant, self.settings)
+            self.max_bot = MaxBot(self.assistant, self.settings, self.auth)
             await self.max_bot.start()
+        if self.settings.vk_enabled:
+            self.vk_bot = VkBot(self.assistant, self.settings, self.auth)
+            await self.vk_bot.start()
         if self.settings.enable_scheduler:
             await self._register_reminder_notifiers()
             await self.reminders.start()
@@ -92,10 +99,11 @@ class Application:
         except AssistantError as error:
             log.warning("vosk warmup failed: %s", error)
         log.info(
-            "assistant is up: llm=%s tts=%s telegram=%s max=%s scheduler=%s",
+            "assistant is up: llm=%s tts=%s telegram=%s vk=%s max=%s scheduler=%s",
             self.assistant.llm_enabled,
             self.settings.tts_enabled,
             self.settings.telegram_enabled,
+            self.settings.vk_enabled,
             self.settings.max_enabled,
             self.settings.enable_scheduler,
         )
@@ -112,6 +120,8 @@ class Application:
         await self.reminders.stop()
         if self.max_bot is not None:
             await self.max_bot.stop()
+        if self.vk_bot is not None:
+            await self.vk_bot.stop()
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
@@ -127,7 +137,7 @@ class Application:
         delay = 5
         while not self._stopping:
             try:
-                await run_telegram_bot(self.assistant, self.settings)
+                await run_telegram_bot(self.assistant, self.settings, self.auth)
                 return
             except asyncio.CancelledError:
                 raise
@@ -141,7 +151,12 @@ class Application:
         return lambda: self.stt.open_stream(max_bytes=max_bytes)
 
     def _start_web(self) -> None:
-        web_app = create_app(self.assistant, self.settings, streaming_factory=self._streaming_factory())
+        web_app = create_app(
+            self.assistant,
+            self.settings,
+            streaming_factory=self._streaming_factory(),
+            auth=self.auth,
+        )
         config = uvicorn.Config(
             web_app,
             host=self.settings.web_host,
@@ -171,6 +186,14 @@ class Application:
                 await client.send_text(user.external_id, reminder_text(event, settings))
 
             self.reminders.register_notifier(Platform.MAX, notify_max)
+
+        if settings.vk_enabled and self.vk_bot is not None:
+            vk_bot = self.vk_bot
+
+            async def notify_vk(user, event: Event) -> None:
+                await vk_bot.send_text(user.external_id, reminder_text(event, settings))
+
+            self.reminders.register_notifier(Platform.VK, notify_vk)
 
 
 async def main() -> None:

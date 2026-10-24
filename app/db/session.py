@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.db.base import Base
-from app.db.models import Event, User  # noqa: F401  (register mappers before create_all)
+from app.db.models import AccountLink, Event, LinkCode, User  # noqa: F401  (register mappers before create_all)
 
-__all__ = ["Database", "Event", "User"]
+__all__ = ["AccountLink", "Database", "Event", "LinkCode", "User"]
 
 
 class Database:

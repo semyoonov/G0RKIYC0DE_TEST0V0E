@@ -8,6 +8,7 @@ from app.db.base import Base
 from app.domain.enums import Platform
 
 if TYPE_CHECKING:
+    from app.db.models.account_link import AccountLink
     from app.db.models.event import Event
 
 
@@ -32,6 +33,9 @@ class User(Base):
     )
 
     events: Mapped[list["Event"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+    links: Mapped[list["AccountLink"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
 

@@ -13,6 +13,7 @@ from app.interfaces.max.handlers import handle_update
 if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
     from app.core.config import Settings
+    from app.services.auth.service import AuthService
 
 log = get_logger(__name__)
 
@@ -189,9 +190,15 @@ class MaxClient:
 class MaxBot:
     """Long-polling MAX bot wired to the assistant service."""
 
-    def __init__(self, assistant: AssistantService, settings: Settings) -> None:
+    def __init__(
+        self,
+        assistant: AssistantService,
+        settings: Settings,
+        auth: AuthService | None = None,
+    ) -> None:
         self._assistant = assistant
         self._settings = settings
+        self._auth = auth
         self._client: MaxClient | None = None
         self._task: asyncio.Task[None] | None = None
         self._marker: int | None = None
@@ -247,7 +254,14 @@ class MaxBot:
                 if not isinstance(update, dict):
                     continue
                 try:
-                    await handle_update(client, update, self._assistant, self._settings.tz)
+                    await handle_update(
+                        client,
+                        update,
+                        self._assistant,
+                        self._settings.tz,
+                        auth=self._auth,
+                        settings=self._settings,
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception:

@@ -15,7 +15,7 @@ from app.domain.enums import EventStatus, EventType, Platform
 from app.domain.models import AssistantResponse, EventRead
 from app.interfaces.cards import DONE_BUTTON_LIMIT, cards_html
 from app.interfaces.telegram.bot import BOT_COMMANDS, create_dispatcher
-from app.interfaces.telegram.handlers import common, text, voice
+from app.interfaces.telegram.handlers import common, link, text, voice
 from app.interfaces.telegram.keyboards import (
     HELP_BUTTON,
     QUICK_ACTIONS,
@@ -218,11 +218,12 @@ def test_dispatcher_includes_routers_in_order() -> None:
     assert isinstance(dispatcher, Dispatcher)
     assert [router.name for router in dispatcher.sub_routers] == [
         "telegram_common",
+        "telegram_link",
         "telegram_text",
         "telegram_voice",
     ]
-    assert dispatcher.sub_routers == [common.router, text.router, voice.router]
-    for router in (common.router, text.router, voice.router):
+    assert dispatcher.sub_routers == [common.router, link.router, text.router, voice.router]
+    for router in (common.router, link.router, text.router, voice.router):
         assert router.message.handlers
     assert text.router.callback_query.handlers
 
@@ -254,6 +255,8 @@ def test_bot_commands() -> None:
         "today",
         "tomorrow",
         "week",
+        "link",
+        "app",
     ]
 
 

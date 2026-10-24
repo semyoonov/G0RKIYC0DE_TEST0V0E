@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from app.core.exceptions import AssistantError, ExternalServiceError
 from app.core.logger import get_logger
 from app.domain.enums import EventStatus, Platform
+from app.interfaces.linking import app_text, display_name_of, identity_for, link_code_text
 from app.interfaces.cards import (
     action_label,
     cards_text,
@@ -17,6 +18,8 @@ from app.interfaces.cards import (
 
 if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
+    from app.core.config import Settings
+    from app.services.auth.service import AuthService
     from app.domain.models import AssistantResponse, EventRead
     from app.interfaces.max.bot import MaxClient
 
@@ -39,6 +42,9 @@ async def handle_update(
     update: dict[str, Any],
     assistant: AssistantService,
     tz: ZoneInfo,
+    *,
+    auth: AuthService | None = None,
+    settings: Settings | None = None,
 ) -> None:
     update_type = update.get("update_type")
     if update_type == "message_callback":
@@ -65,6 +71,12 @@ async def handle_update(
         if command == "/help":
             await client.send_text(user_id, HELP)
             return
+        if command == "/link" and auth is not None and settings is not None:
+            await _send_link_code(client, user_id, sender, auth, settings)
+            return
+        if command == "/app" and settings is not None:
+            await client.send_text(user_id, app_text(settings))
+            return
 
     try:
         response = await _run_assistant(client, assistant, user_id, text, attachments)
@@ -74,6 +86,28 @@ async def handle_update(
         return
     if response is not None:
         await _send_reply(client, user_id, response, tz)
+
+
+async def _send_link_code(
+    client: MaxClient,
+    user_id: int | str,
+    sender: dict[str, Any],
+    auth: AuthService,
+    settings: Settings,
+) -> None:
+    name = sender.get("name") or sender.get("first_name")
+    identity = identity_for(
+        Platform.MAX,
+        user_id,
+        display_name_of(name if isinstance(name, str) else None, sender.get("username")),
+    )
+    try:
+        code = await auth.issue_link_code(identity)
+    except Exception:  # noqa: BLE001 - a failed code must not kill the polling loop
+        log.exception("MAX link code request failed for user %s", user_id)
+        await client.send_text(user_id, "Не удалось создать код привязки, попробуйте ещё раз.")
+        return
+    await client.send_text(user_id, link_code_text(settings, code["code"]))
 
 
 async def _handle_callback(client: MaxClient, update: dict[str, Any], assistant: AssistantService) -> None:

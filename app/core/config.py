@@ -3,6 +3,8 @@ from zoneinfo import ZoneInfo
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.domain.enums import Platform
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -51,7 +53,16 @@ class Settings(BaseSettings):
     audio_max_duration_seconds: int = 120
 
     telegram_bot_token: str = ""
+    telegram_bot_username: str = ""
     enable_telegram: bool = True
+
+    vk_bot_token: str = ""
+    vk_bot_group_id: int = 0
+    vk_mini_app_id: int = 0
+    vk_mini_app_secret: str = ""
+    enable_vk: bool = True
+
+    max_bot_username: str = ""
     max_bot_token: str = ""
     max_api_base_url: str = "https://platform-api2.max.ru"
     max_poll_timeout_seconds: int = 30
@@ -60,6 +71,10 @@ class Settings(BaseSettings):
     web_host: str = "0.0.0.0"
     web_port: int = 8000
     web_public_url: str = "http://localhost:8000"
+    mini_app_public_url: str = ""
+    session_secret: str = "dev-insecure-session-secret"
+    session_ttl_seconds: int = 2592000
+    link_code_ttl_seconds: int = 900
     ws_max_concurrent_streams: int = 4
 
     enable_scheduler: bool = True
@@ -92,6 +107,32 @@ class Settings(BaseSettings):
     @property
     def tls_verify(self) -> bool | str:
         return self.sber_ca_bundle or self.gigachat_verify_ssl
+
+    @property
+    def vk_enabled(self) -> bool:
+        return self.enable_vk and bool(self.vk_bot_token.strip())
+
+    @property
+    def mini_app_base_url(self) -> str:
+        return (self.mini_app_public_url or self.web_public_url).rstrip("/")
+
+    def mini_app_link(self, platform: Platform, code: str | None = None) -> str | None:
+        """Public URL that opens the assistant on one platform, optionally carrying a link code."""
+        startapp = f"?startapp={code}" if code else ""
+        if platform is Platform.TELEGRAM:
+            username = self.telegram_bot_username.strip().lstrip("@")
+            return f"https://t.me/{username}{startapp}" if username else None
+        if platform is Platform.MAX:
+            username = self.max_bot_username.strip().lstrip("@")
+            return f"https://max.ru/{username}{startapp}" if username else None
+        if platform is Platform.VK:
+            return f"https://vk.com/app{self.vk_mini_app_id}" if self.vk_mini_app_id else None
+        if platform is Platform.WEB:
+            return f"{self.mini_app_base_url}/?link={code}" if code else f"{self.mini_app_base_url}/"
+        return None
+
+    def mini_app_links(self, code: str | None = None) -> dict[str, str | None]:
+        return {platform.value: self.mini_app_link(platform, code) for platform in Platform}
 
 
 @lru_cache

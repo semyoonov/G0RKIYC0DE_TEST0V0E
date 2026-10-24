@@ -1,6 +1,7 @@
 fastapi==0.143.3
 uvicorn[standard]==0.54.0
 aiogram==3.31.0
+vkbottle==4.11.0
 SQLAlchemy[asyncio]==2.1.5
 asyncpg==0.32.0
 aiosqlite==0.22.1
