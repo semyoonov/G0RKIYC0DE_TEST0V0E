@@ -143,7 +143,7 @@ export default function App() {
           onToggleRecording={() => void toggleRecording()}
         />
         <p className="min-h-5 px-4 pb-2 text-xs text-ink-dim sm:px-6" role="status">
-          {status}
+          {status || "Нажмите «Голосом» и говорите — текст появляется на лету."}
         </p>
       </footer>
     </div>

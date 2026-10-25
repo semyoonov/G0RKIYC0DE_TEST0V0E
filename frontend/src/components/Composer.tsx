@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Mic } from "lucide-react";
 
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -42,8 +43,19 @@ export function Composer({ disabled, recording, busy, onSend, onToggleRecording 
           onClick={onToggleRecording}
           disabled={busy || disabled}
           aria-pressed={recording}
+          aria-label={recording ? "Остановить запись" : "Записать голосом"}
         >
-          {recording ? "Стоп" : "Записать"}
+          {recording ? (
+            <>
+              <span className="size-2 animate-pulse rounded-full bg-danger" />
+              Стоп
+            </>
+          ) : (
+            <>
+              <Mic className="size-4" />
+              Голосом
+            </>
+          )}
         </Button>
         <Button type="submit" className="w-full sm:w-auto" disabled={disabled || recording || !value.trim()}>
           Отправить
