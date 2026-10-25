@@ -87,8 +87,6 @@ async def send_reply(
     tz: ZoneInfo,
 ) -> None:
     from vkbottle import Callback, Keyboard, KeyboardButtonColor
-    from vkbottle.tools import VoiceMessageUploader
-
     text = response.text.strip()
     if text:
         await send_text(api, peer_id, text)
@@ -105,17 +103,6 @@ async def send_reply(
             cards_text(response.events, tz, action_label(response.intent)),
             keyboard=keyboard.get_json() if buttons else None,
         )
-    if response.audio:
-        try:
-            uploader = VoiceMessageUploader(api)
-            attachment = await uploader.upload(response.audio, peer_id=peer_id)
-            await api.messages.send(
-                peer_id=peer_id,
-                random_id=_random_id(),
-                attachment=attachment,
-            )
-        except Exception:
-            log.warning("vk: voice reply could not be uploaded", exc_info=True)
 
 
 def _random_id() -> int:
@@ -197,7 +184,7 @@ async def handle_message(
         if found is not None:
             _, url = found
             audio = await download_voice(url)
-            response = await assistant.handle_voice(Platform.VK, str(user_id), audio, source_format="ogg")
+            response = await assistant.handle_voice(Platform.VK, str(user_id), audio, source_format="ogg", speak=False)
         elif text:
             response = await assistant.handle_text(Platform.VK, str(user_id), text)
         else:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import Message
 
 from app.core.exceptions import AssistantError
 from app.core.logger import get_logger
@@ -57,16 +57,10 @@ async def handle_voice_message(
             str(message.from_user.id),
             audio,
             source_format="ogg",
-            speak=True,
+            speak=False,
         )
     except AssistantError:
         logger.exception("telegram: voice request failed for user %s", message.from_user.id)
         await message.answer(ERROR_TEXT)
         return
-
-    if response.audio is not None:
-        await message.bot.send_voice(
-            chat_id=message.chat.id,
-            voice=BufferedInputFile(response.audio, filename="answer.ogg"),
-        )
     await send_answer(message, response, settings.tz)

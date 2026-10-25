@@ -6,10 +6,11 @@ import { EventCard } from "./EventCard";
 interface ChatMessageProps {
   entry: ChatEntry;
   timezone: string;
+  autoPlayAudio?: boolean;
   onComplete: (eventId: number) => Promise<void> | void;
 }
 
-export function ChatMessage({ entry, timezone, onComplete }: ChatMessageProps) {
+export function ChatMessage({ entry, timezone, autoPlayAudio = true, onComplete }: ChatMessageProps) {
   if (entry.role === "user") {
     return (
       <div className="flex justify-end">
@@ -51,7 +52,7 @@ export function ChatMessage({ entry, timezone, onComplete }: ChatMessageProps) {
           ))}
         </ul>
       ) : null}
-      {reply.audio ? <AudioReply data={reply.audio} mime={reply.audio_mime} /> : null}
+      {reply.audio ? <AudioReply data={reply.audio} mime={reply.audio_mime} autoPlay={autoPlayAudio} /> : null}
     </div>
   );
 }

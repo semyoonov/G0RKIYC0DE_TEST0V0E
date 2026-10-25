@@ -343,7 +343,7 @@ async def test_period_command_sends_plain_listing_without_card(settings: Setting
     assert message.bot.chat_actions == [(42, "typing")]
 
 
-async def test_voice_handler_sends_voice_then_text_and_card(settings: Settings) -> None:
+async def test_voice_handler_sends_text_and_card_without_voice(settings: Settings) -> None:
     event = make_event(1, event_type=EventType.TASK, title="Позвонить в банк")
     assistant = StubAssistant(
         AssistantResponse(
@@ -359,9 +359,8 @@ async def test_voice_handler_sends_voice_then_text_and_card(settings: Settings) 
 
     await voice.handle_voice_message(message, assistant=assistant, settings=settings)
 
-    assert assistant.voice_calls == [(Platform.TELEGRAM, "42", b"OGG-BYTES", "ogg", True)]
-    assert len(bot.voices) == 1
-    assert bot.voices[0]["chat_id"] == 42
+    assert assistant.voice_calls == [(Platform.TELEGRAM, "42", b"OGG-BYTES", "ogg", False)]
+    assert bot.voices == []
     assert len(message.answers) == 2
     answer, card = message.answers
     assert answer == {"text": "Задача создана."}

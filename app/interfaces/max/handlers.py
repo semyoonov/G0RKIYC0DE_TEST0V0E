@@ -164,7 +164,7 @@ async def _run_assistant(
         if not isinstance(url, str) or not url:
             raise ExternalServiceError("max", "audio attachment has no download url")
         audio = await client.download(url)
-        return await assistant.handle_voice(Platform.MAX, str(user_id), audio, source_format=None)
+        return await assistant.handle_voice(Platform.MAX, str(user_id), audio, source_format=None, speak=False)
     if not text:
         return None
     return await assistant.handle_text(Platform.MAX, str(user_id), text)
@@ -204,5 +204,3 @@ async def _send_reply(
             cards_text(response.events, tz, action_label(response.intent)),
             buttons=done_buttons(response.events),
         )
-    if response.audio:
-        await client.send_audio(user_id, response.audio, filename="answer.opus")

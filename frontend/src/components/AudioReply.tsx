@@ -6,9 +6,10 @@ import { Button } from "./ui/button";
 interface AudioReplyProps {
   data: string;
   mime: string | null;
+  autoPlay?: boolean;
 }
 
-export function AudioReply({ data, mime }: AudioReplyProps) {
+export function AudioReply({ data, mime, autoPlay = true }: AudioReplyProps) {
   const url = useMemo(() => decodeAudio(data, mime), [data, mime]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -19,8 +20,9 @@ export function AudioReply({ data, mime }: AudioReplyProps) {
   }, [url]);
 
   useEffect(() => {
+    if (!autoPlay) return;
     void audioRef.current?.play().catch(() => {});
-  }, [url]);
+  }, [url, autoPlay]);
 
   if (!url) return null;
 

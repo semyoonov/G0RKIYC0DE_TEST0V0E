@@ -77,7 +77,7 @@ class FakeApi:
 class FakeAssistant:
     def __init__(self) -> None:
         self.text_calls: list[tuple[Platform, str, str]] = []
-        self.voice_calls: list[tuple[Platform, str, bytes, str | None]] = []
+        self.voice_calls: list[tuple[Platform, str, bytes, str | None, bool]] = []
         self.status_calls: list[tuple[Platform, str, int, EventStatus]] = []
 
     async def handle_text(self, platform: Platform, external_user_id: str, text: str) -> AssistantResponse:
@@ -91,8 +91,9 @@ class FakeAssistant:
         audio: bytes,
         *,
         source_format: str | None = None,
+        speak: bool = True,
     ) -> AssistantResponse:
-        self.voice_calls.append((platform, external_user_id, audio, source_format))
+        self.voice_calls.append((platform, external_user_id, audio, source_format, speak))
         return AssistantResponse(text="Голосовой ответ", audio=b"OPUS")
 
     async def set_event_status(
@@ -152,7 +153,8 @@ async def test_voice_attachment_is_transcribed(monkeypatch: pytest.MonkeyPatch) 
 
     await handle_message(make_message("", [attachment]), api, assistant, make_settings(), None)
 
-    assert assistant.voice_calls == [(Platform.VK, "777", b"OGGDATA", "ogg")]
+    assert assistant.voice_calls == [(Platform.VK, "777", b"OGGDATA", "ogg", False)]
+    assert "attachment" not in api.log[0]
 
 
 async def test_link_command_prints_code() -> None:

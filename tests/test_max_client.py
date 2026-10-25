@@ -441,7 +441,7 @@ async def test_handle_update_dispatches_voice_attachment() -> None:
         await client.close()
 
     assert downloads == ["/voice/1.ogg"]
-    assert assistant.voice_calls == [(Platform.MAX, "555", b"OGG-PAYLOAD", None, True)]
+    assert assistant.voice_calls == [(Platform.MAX, "555", b"OGG-PAYLOAD", None, False)]
     assert replies == [{"text": "Расшифровал"}]
 
 
