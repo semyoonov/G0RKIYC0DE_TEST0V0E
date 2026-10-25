@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -21,6 +21,7 @@ from app.services.auth.launch import (
     vk_identity,
 )
 from app.services.auth.tokens import SessionTokenError, SessionTokens
+from app.services.auth.vk_profile import fetch_display_name
 
 __all__ = [
     "AuthService",
@@ -107,6 +108,10 @@ class AuthService:
             if platform is Platform.WEB
             else self.launch(platform, payload)
         )
+        if platform is Platform.VK and not context.identity.display_name:
+            name = await fetch_display_name(self._settings.vk_access_token, context.identity.external_id)
+            if name:
+                context = replace(context, identity=replace(context.identity, display_name=name))
         redeemed = False
         async with self._session_factory() as session:
             repository = AccountRepository(session)

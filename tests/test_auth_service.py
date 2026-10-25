@@ -85,6 +85,39 @@ async def test_max_and_vk_sessions(auth: AuthService) -> None:
     assert vk_session.identity.external_id == "555"
 
 
+async def test_vk_login_takes_the_name_from_the_service_token(monkeypatch, session_factory) -> None:
+    async def fake_fetch(access_token: str, user_id: str) -> str | None:
+        assert access_token == "vk-service-token"
+        assert user_id == "555"
+        return "Иван Петров"
+
+    monkeypatch.setattr("app.services.auth.service.fetch_display_name", fake_fetch)
+    service = AuthService(session_factory, auth_settings(vk_access_token="vk-service-token"))
+
+    session = await service.open_session(Platform.VK, vk_launch_params())
+
+    assert session.identity.display_name == "Иван Петров"
+
+
+async def test_vk_login_survives_a_failed_profile_lookup(monkeypatch, session_factory) -> None:
+    async def fake_fetch(access_token: str, user_id: str) -> str | None:
+        return None
+
+    monkeypatch.setattr("app.services.auth.service.fetch_display_name", fake_fetch)
+    service = AuthService(session_factory, auth_settings(vk_access_token="vk-service-token"))
+
+    session = await service.open_session(Platform.VK, vk_launch_params())
+
+    assert session.identity.platform is Platform.VK
+    assert session.identity.display_name is None
+
+
+async def test_vk_profile_lookup_without_a_token_skips_the_network() -> None:
+    from app.services.auth.vk_profile import fetch_display_name
+
+    assert await fetch_display_name("", "555") is None
+
+
 async def test_start_param_links_web_account_to_telegram(auth: AuthService, session_factory) -> None:
     web_session = await auth.open_session(Platform.WEB, client_id="web-before-link")
     async with session_factory() as session:

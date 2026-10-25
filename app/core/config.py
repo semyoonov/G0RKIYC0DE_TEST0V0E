@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     vk_bot_group_id: int = 0
     vk_mini_app_id: int = 0
     vk_mini_app_secret: str = ""
+    vk_access_token: str = ""
     enable_vk: bool = True
 
     max_bot_username: str = ""

@@ -134,8 +134,8 @@ async def send_text(api: API, peer_id: int, text: str, keyboard: str | None = No
     )
 
 
-def main_keyboard() -> Any:
-    from vkbottle import Keyboard, KeyboardButtonColor, Text
+def main_keyboard(settings: Settings) -> Any:
+    from vkbottle import Keyboard, KeyboardButtonColor, OpenLink, Text
 
     keyboard = Keyboard(one_time=False, inline=False)
     for action in QUICK_ACTIONS:
@@ -143,6 +143,21 @@ def main_keyboard() -> Any:
         keyboard.row()
     keyboard.add(Text("Помощь"), color=KeyboardButtonColor.SECONDARY)
     keyboard.add(Text("Привязать аккаунт"), color=KeyboardButtonColor.SECONDARY)
+    app_link = settings.mini_app_link(Platform.VK)
+    if app_link:
+        keyboard.row()
+        keyboard.add(OpenLink("Открыть приложение", app_link), color=KeyboardButtonColor.PRIMARY)
+    return keyboard.get_json()
+
+
+def app_keyboard(settings: Settings) -> Any:
+    from vkbottle import Keyboard, KeyboardButtonColor, OpenLink
+
+    app_link = settings.mini_app_link(Platform.VK)
+    if not app_link:
+        return None
+    keyboard = Keyboard(one_time=False, inline=False)
+    keyboard.add(OpenLink("Открыть приложение", app_link), color=KeyboardButtonColor.PRIMARY)
     return keyboard.get_json()
 
 
@@ -158,16 +173,20 @@ async def handle_message(
     text = (message.text or "").strip()
 
     if text.lower() in {"/start", "начать", "start"}:
-        await send_text(api, peer_id, GREETING, keyboard=main_keyboard())
+        await send_text(api, peer_id, GREETING, keyboard=main_keyboard(settings))
         return
     if text.lower() in {"/help", "помощь", "help"}:
-        await send_text(api, peer_id, HELP, keyboard=main_keyboard())
+        await send_text(api, peer_id, HELP, keyboard=main_keyboard(settings))
         return
     if text.lower() in {"/link", "привязать аккаунт"}:
         await _send_link_code(api, peer_id, user_id, message, auth, settings)
         return
     if text.lower() in {"/app", "приложение"}:
-        await send_text(api, peer_id, app_text(settings))
+        app_link = settings.mini_app_link(Platform.VK)
+        text_parts = [app_text(settings)]
+        if app_link:
+            text_parts.append(f"Мини-приложение ВКонтакте: {app_link}")
+        await send_text(api, peer_id, "\n".join(text_parts), keyboard=app_keyboard(settings))
         return
 
     if text.startswith("/"):

@@ -21,19 +21,21 @@ from datetime import datetime, timezone
 FIXED_TIME = datetime(2025, 5, 20, 9, 30, tzinfo=timezone.utc)
 
 
-def make_settings() -> Settings:
-    return Settings(
-        _env_file=None,
-        database_url="sqlite+aiosqlite://",
-        cache_enabled=False,
-        auto_create_tables=False,
-        sber_tts_credentials="",
-        local_tts_enabled=False,
-        vk_bot_token="vk-token",
-        vk_bot_group_id=242413551,
-        web_public_url="https://assistant.test",
-        timezone="Europe/Moscow",
-    )
+def make_settings(**overrides: Any) -> Settings:
+    values: dict[str, Any] = {
+        "_env_file": None,
+        "database_url": "sqlite+aiosqlite://",
+        "cache_enabled": False,
+        "auto_create_tables": False,
+        "sber_tts_credentials": "",
+        "local_tts_enabled": False,
+        "vk_bot_token": "vk-token",
+        "vk_bot_group_id": 242413551,
+        "web_public_url": "https://assistant.test",
+        "timezone": "Europe/Moscow",
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 def make_event(event_id: int = 5) -> EventRead:
@@ -160,6 +162,30 @@ async def test_link_command_prints_code() -> None:
 
     assert auth.identities == [(Platform.VK, "777")]
     assert "AB12CD" in api.log[0]["message"]
+
+
+async def test_app_command_sends_the_mini_app_button() -> None:
+    api, assistant = FakeApi(), FakeAssistant()
+
+    await handle_message(
+        make_message("/app"),
+        api,
+        assistant,
+        make_settings(vk_mini_app_id=54852072),
+        None,
+    )
+
+    assert "vk.com/app54852072" in api.log[0]["message"]
+    assert "vk.com/app54852072" in api.log[0]["keyboard"]
+    assert '"open_link"' in api.log[0]["keyboard"]
+
+
+async def test_start_keyboard_has_no_app_button_without_app_id() -> None:
+    api, assistant = FakeApi(), FakeAssistant()
+
+    await handle_message(make_message("/start"), api, assistant, make_settings(), None)
+
+    assert '"open_link"' not in api.log[0]["keyboard"]
 
 
 async def test_link_command_without_auth_is_refused() -> None:
