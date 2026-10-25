@@ -103,6 +103,12 @@ async function loginFresh(): Promise<AuthSession | null> {
 async function runBootstrap(): Promise<void> {
   patch({ status: "loading", error: null });
   try {
+    const launch = detectLaunch();
+    // Inside a mini app the launch data names the account, so a stored web token must not win.
+    if (launch.platform !== "web" && launch.payload) {
+      await loginFresh();
+      return;
+    }
     const stored = readSessionToken();
     if (stored) {
       try {

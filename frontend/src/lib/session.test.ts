@@ -123,6 +123,33 @@ describe("bootstrapSession", () => {
     expect(session.getSessionSnapshot().status).toBe("ready");
   });
 
+  it("prefers the mini app launch over a stored web token", async () => {
+    launchState.current = { platform: "vk", payload: "vk_user_id=1&sign=abc" };
+    window.localStorage.setItem("assistant_session_token", "web-token");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        makeSession({
+          token: "vk-token",
+          identity: {
+            platform: "vk",
+            platform_title: "ВКонтакте",
+            external_id: "1",
+            display_name: "Иван Петров",
+          },
+        }),
+      ),
+    );
+
+    await session.bootstrapSession();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const { path, init } = requestAt(0);
+    expect(path).toBe("/api/auth/session");
+    expect(requestBody(init)).toEqual({ platform: "vk", payload: "vk_user_id=1&sign=abc", client_id: null });
+    expect(window.localStorage.getItem("assistant_session_token")).toBe("vk-token");
+    expect(session.getSessionSnapshot().session?.identity.platform).toBe("vk");
+  });
+
   it("opens a fresh session when the stored token is rejected", async () => {
     window.localStorage.setItem("assistant_session_token", "stale-token");
     window.localStorage.setItem("assistant_client_id", "client-anon");
