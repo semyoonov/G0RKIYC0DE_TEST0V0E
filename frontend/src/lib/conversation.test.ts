@@ -136,6 +136,24 @@ describe("ConversationLoop", () => {
     expect(harness.voice.release).toHaveBeenCalled();
   });
 
+  it("keeps listening when the request fails instead of ending the dialogue", async () => {
+    const harness = makeHarness({
+      send: async () => ({ ok: false, hasAudio: false }),
+    });
+    await harness.loop.start();
+    await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1));
+
+    const committing = harness.loop.commit();
+    await vi.waitFor(() => expect(harness.sendUtterance).toHaveBeenCalledTimes(1));
+    await committing;
+    await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2));
+
+    expect(harness.loop.isActive).toBe(true);
+    expect(harness.loop.currentPhase).toBe("listening");
+    expect(harness.voice.release).not.toHaveBeenCalled();
+    expect(harness.onActiveChange).not.toHaveBeenCalledWith(false);
+  });
+
   it("keeps listening after an empty turn without sending or reporting an error", async () => {
     const harness = makeHarness({ outcomes: [{ kind: "empty" }] });
     await harness.loop.start();

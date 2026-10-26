@@ -244,9 +244,22 @@ export class ConversationLoop {
     }
 
     if (!result.ok) {
+      // A failed request must not end the dialogue: the user keeps the microphone
+      // and can simply say the phrase again.
       gate.settle();
       this.gate = null;
-      this.finish(generation, "idle");
+      if (!this.active || this.stopRequested) {
+        this.finish(generation, "idle");
+        return;
+      }
+      if (closing) {
+        this.finish(generation, "ended");
+        return;
+      }
+      this.turn = "idle";
+      await this.sleep(this.guardMs);
+      if (generation !== this.generation || !this.active || this.stopRequested) return;
+      await this.listen(generation);
       return;
     }
 
@@ -294,7 +307,7 @@ export class ConversationLoop {
   }
 
   private waitForPlayback(gate: PlaybackGate): Promise<void> {
-    const timeoutMs = this.options.playbackTimeoutMs ?? 60_000;
+    const timeoutMs = this.options.playbackTimeoutMs ?? 20_000;
     return new Promise((resolve) => {
       const timer = globalThis.setTimeout(resolve, timeoutMs);
       void gate.promise.then(() => {

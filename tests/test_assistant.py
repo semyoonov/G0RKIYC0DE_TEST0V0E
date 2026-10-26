@@ -299,11 +299,22 @@ async def test_closing_turn_forbids_new_events(session_factory, cloud_settings, 
     response = await assistant.handle_text(Platform.WEB, "web-closing", "Спасибо!", closing=True)
 
     assert response.text.startswith("Всё записано")
-    system_messages = [call["messages"] for call in llm.calls]
-    assert any(
-        message["role"] == "system" and message["content"] == CLOSING_RULE
-        for message in system_messages[0]
-    )
+    sent = llm.calls[0]["messages"]
+    system = [message for message in sent if message["role"] == "system"]
+    assert len(system) == 1, "GigaChat accepts a single system message"
+    assert sent[0]["role"] == "system"
+    assert system[0]["content"].rstrip().endswith(CLOSING_RULE)
+
+
+async def test_a_normal_turn_keeps_the_plain_system_prompt(session_factory, cloud_settings, cache):
+    llm = FakeLLM(ChatCompletion(content="Готово."))
+    assistant = AssistantService(session_factory, cloud_settings, llm=llm, cache=cache)
+
+    await assistant.handle_text(Platform.WEB, "web-plain", "Что на завтра?")
+
+    system = [message for message in llm.calls[0]["messages"] if message["role"] == "system"]
+    assert len(system) == 1
+    assert CLOSING_RULE not in system[0]["content"]
 
 
 async def test_prewarm_sends_the_system_prompt_first(session_factory, cloud_settings, cache):

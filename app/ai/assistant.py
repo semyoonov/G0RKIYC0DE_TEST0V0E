@@ -260,11 +260,14 @@ class AssistantService:
         closing: bool = False,
     ) -> tuple[str, list[EventRead], str | None]:
         assert self._llm is not None
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": build_system_prompt(self._settings.tz)},
-        ]
+        # GigaChat accepts exactly one system message and it has to come first, so the
+        # closing rule is folded into the prompt instead of being a second system message.
+        system_prompt = build_system_prompt(self._settings.tz)
         if closing:
-            messages.append({"role": "system", "content": CLOSING_RULE})
+            system_prompt = f"{system_prompt}\n\n{CLOSING_RULE}"
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+        ]
         messages.extend(await self._load_history(user_id))
         messages.append({"role": "user", "content": text})
 
