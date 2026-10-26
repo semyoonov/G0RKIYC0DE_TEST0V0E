@@ -68,6 +68,13 @@ class AudioTranscoder(Protocol):
     async def to_wav(self, data: bytes, source_hint: str | None = None) -> bytes: ...
 
 
+CLOSING_RULE = (
+    "Пользователь завершает голосовой диалог. Не создавай и не меняй события. "
+    "Ответь одной короткой фразой: подтверди, что всё записано, и скажи, что ты рядом, "
+    "когда понадобишься."
+)
+
+
 class AssistantService:
     """One entry point for every interface: audio/text in, text and optional audio out."""
 
@@ -102,6 +109,7 @@ class AssistantService:
         *,
         speak: bool = False,
         audio_format: str | None = None,
+        closing: bool = False,
     ) -> AssistantResponse:
         normalized = " ".join((text or "").split())
         if not normalized:
@@ -109,7 +117,7 @@ class AssistantService:
         if self._llm is None:
             return AssistantResponse(text=LLM_DISABLED_TEXT)
         try:
-            response = await self._process(platform, external_user_id, normalized)
+            response = await self._process(platform, external_user_id, normalized, closing=closing)
         except AssistantError as error:
             log.warning("assistant failed: %s", error)
             return AssistantResponse(text=ERROR_TEXT)
@@ -119,6 +127,21 @@ class AssistantService:
         if speak:
             await self._attach_audio(response, self._preferred_audio_format(platform, audio_format))
         return response
+
+    async def prewarm(self) -> bool:
+        """Sends the system prompt ahead of the first utterance so the first answer starts faster."""
+        if self._llm is None or not self._settings.gigachat_enabled:
+            return False
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": build_system_prompt(self._settings.tz)},
+            {"role": "user", "content": "Проверка связи. Ответь одним словом."},
+        ]
+        try:
+            await self._llm.chat(messages, max_tokens=1)
+        except Exception as error:  # noqa: BLE001 - a warmup must never surface as an error
+            log.info("llm prewarm skipped: %s", error)
+            return False
+        return True
 
     async def handle_voice(
         self,
@@ -209,13 +232,15 @@ class AssistantService:
         platform: Platform,
         external_user_id: str,
         text: str,
+        *,
+        closing: bool = False,
     ) -> AssistantResponse:
         async with self._session_factory() as session:
             user = await UserRepository(session).get_or_create(platform, external_user_id)
             executor = ToolExecutor(session, user, self._settings, self._cache)
             # End the read transaction so the connection is not held during model and messenger calls.
             await session.commit()
-            answer, events, intent = await self._run_llm(user.id, text, executor)
+            answer, events, intent = await self._run_llm(user.id, text, executor, closing=closing)
         return AssistantResponse(
             text=_humanize(answer),
             events=events,
@@ -228,11 +253,15 @@ class AssistantService:
         user_id: int,
         text: str,
         executor: ToolExecutor,
+        *,
+        closing: bool = False,
     ) -> tuple[str, list[EventRead], str | None]:
         assert self._llm is not None
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": build_system_prompt(self._settings.tz)},
         ]
+        if closing:
+            messages.append({"role": "system", "content": CLOSING_RULE})
         messages.extend(await self._load_history(user_id))
         messages.append({"role": "user", "content": text})
 

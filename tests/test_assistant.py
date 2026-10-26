@@ -6,6 +6,7 @@ from fakeredis.aioredis import FakeRedis
 
 from app.ai.assistant import (
     CLARIFICATION_TEXT,
+    CLOSING_RULE,
     LLM_DISABLED_TEXT,
     TRANSCRIPTION_ERROR_TEXT,
     AssistantService,
@@ -285,3 +286,32 @@ async def test_web_voice_normalises_wav16_format(session_factory, settings):
 
     assert response.audio_format == "wav"
     assert response.audio_mime_type == "audio/wav"
+
+
+async def test_closing_turn_forbids_new_events(session_factory, cloud_settings, cache):
+    llm = FakeLLM(ChatCompletion(content="Всё записано, обращайтесь."))
+    assistant = AssistantService(session_factory, cloud_settings, llm=llm, cache=cache)
+
+    response = await assistant.handle_text(Platform.WEB, "web-closing", "Спасибо!", closing=True)
+
+    assert response.text.startswith("Всё записано")
+    system_messages = [call["messages"] for call in llm.calls]
+    assert any(
+        message["role"] == "system" and message["content"] == CLOSING_RULE
+        for message in system_messages[0]
+    )
+
+
+async def test_prewarm_sends_the_system_prompt_first(session_factory, cloud_settings, cache):
+    llm = FakeLLM(ChatCompletion(content="Ок."))
+    assistant = AssistantService(session_factory, cloud_settings, llm=llm, cache=cache)
+
+    assert await assistant.prewarm() is True
+    assert len(llm.calls) == 1
+    assert llm.calls[0]["messages"][0]["role"] == "system"
+
+
+async def test_prewarm_without_llm_is_a_no_op(session_factory, settings, cache):
+    assistant = AssistantService(session_factory, settings, llm=None, cache=cache)
+
+    assert await assistant.prewarm() is False

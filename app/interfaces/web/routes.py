@@ -36,6 +36,7 @@ class ChatPayload(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
     client_id: str = Field(default=DEFAULT_CLIENT_ID, min_length=1, max_length=128)
     speak: bool = False
+    closing: bool = False
 
     @field_validator("text")
     @classmethod
@@ -129,11 +130,18 @@ def build_router(
                 external_id,
                 payload.text,
                 speak=payload.speak,
+                closing=payload.closing,
             )
         except AssistantError as exc:
             log.exception("web chat request failed")
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _serialize_response(response)
+
+    @router.post("/api/chat/warmup")
+    async def chat_warmup(request: Request) -> dict[str, Any]:
+        await _conversation_owner(request, auth, Platform.WEB, DEFAULT_CLIENT_ID)
+        warmed = await assistant.prewarm()
+        return {"status": "ok", "warmed": bool(warmed)}
 
     @router.post("/api/voice")
     async def voice(

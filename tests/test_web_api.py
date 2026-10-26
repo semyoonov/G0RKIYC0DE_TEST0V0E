@@ -41,10 +41,15 @@ def make_event(
 class FakeAssistant:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
-        self.text_calls: list[tuple[Platform, str, str, bool]] = []
+        self.prewarm_calls = 0
+        self.text_calls: list[tuple[Platform, str, str, bool, bool]] = []
         self.voice_calls: list[tuple[Platform, str, bytes, str | None, bool]] = []
         self.list_calls: list[tuple[Platform, str, Period]] = []
         self.status_calls: list[tuple[Platform, str, int, EventStatus]] = []
+
+    async def prewarm(self) -> bool:
+        self.prewarm_calls += 1
+        return True
 
     async def handle_text(
         self,
@@ -53,10 +58,11 @@ class FakeAssistant:
         text: str,
         *,
         speak: bool = False,
+        closing: bool = False,
     ) -> AssistantResponse:
         if self.fail:
             raise AssistantError("сервис недоступен")
-        self.text_calls.append((platform, external_user_id, text, speak))
+        self.text_calls.append((platform, external_user_id, text, speak, closing))
         return AssistantResponse(text=f"Ответ: {text}", events=[make_event(1)])
 
     async def handle_voice(
@@ -154,7 +160,7 @@ async def test_chat_returns_reply_and_events() -> None:
     assert event["status"] == "pending"
     parsed = datetime.fromisoformat(event["starts_at"])
     assert parsed == FIXED_TIME
-    assert assistant.text_calls == [(Platform.WEB, "web-demo", "привет", False)]
+    assert assistant.text_calls == [(Platform.WEB, "web-demo", "привет", False, False)]
 
 
 async def test_chat_uses_explicit_client_id() -> None:
@@ -167,7 +173,7 @@ async def test_chat_uses_explicit_client_id() -> None:
     )
 
     assert response.status_code == 200
-    assert assistant.text_calls == [(Platform.WEB, "web-test", "план", False)]
+    assert assistant.text_calls == [(Platform.WEB, "web-test", "план", False, False)]
 
 
 async def test_chat_forwards_speak_flag() -> None:
@@ -180,7 +186,7 @@ async def test_chat_forwards_speak_flag() -> None:
     )
 
     assert response.status_code == 200
-    assert assistant.text_calls == [(Platform.WEB, "web-demo", "план", True)]
+    assert assistant.text_calls == [(Platform.WEB, "web-demo", "план", True, False)]
 
 
 async def test_chat_rejects_empty_text() -> None:
@@ -261,3 +267,25 @@ async def test_complete_event_returns_updated_status() -> None:
     assert body["id"] == 1
     assert body["status"] == "done"
     assert assistant.status_calls == [(Platform.WEB, "web-demo", 1, EventStatus.DONE)]
+
+
+async def test_chat_forwards_the_closing_flag() -> None:
+    assistant = FakeAssistant()
+    response = await request(
+        build_app(assistant),
+        "POST",
+        "/api/chat",
+        json={"text": "спасибо", "client_id": "web-demo", "closing": True},
+    )
+
+    assert response.status_code == 200
+    assert assistant.text_calls == [(Platform.WEB, "web-demo", "спасибо", False, True)]
+
+
+async def test_chat_warmup_reports_that_the_model_is_ready() -> None:
+    assistant = FakeAssistant()
+    response = await request(build_app(assistant), "POST", "/api/chat/warmup")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert assistant.prewarm_calls == 1

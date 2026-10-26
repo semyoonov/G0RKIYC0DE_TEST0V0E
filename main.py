@@ -10,6 +10,7 @@ from app.ai.assistant import AssistantService
 from app.ai.llm.gigachat_client import GigaChatClient
 from app.ai.stt.audio_converter import AudioConverter
 from app.ai.stt.vosk_stt import VoskSpeechRecognizer
+from app.ai.tts.cloud_tts import CloudTextToSpeech
 from app.ai.tts.local_tts import LocalTextToSpeech
 from app.ai.tts.sber_tts import SberTextToSpeech
 from app.core.config import Settings, get_settings
@@ -79,14 +80,16 @@ class Application:
         self.max_reminder_client: MaxClient | None = None
         self._stopping = False
 
-    def _build_tts(self) -> SberTextToSpeech | LocalTextToSpeech | None:
+    def _build_tts(self) -> CloudTextToSpeech | SberTextToSpeech | LocalTextToSpeech | None:
         settings = self.settings
         if not settings.tts_enabled:
             return None
-        use_sber = settings.tts_backend.strip().lower() == "sber" or (
-            settings.tts_backend.strip().lower() == "auto" and settings.sber_tts_available
-        )
-        return SberTextToSpeech(settings) if use_sber else LocalTextToSpeech(settings)
+        backend = settings.resolved_tts_backend
+        if backend == "cloud":
+            return CloudTextToSpeech(settings)
+        if backend == "sber":
+            return SberTextToSpeech(settings)
+        return LocalTextToSpeech(settings)
 
     async def start(self) -> None:
         if self.settings.auto_create_tables:

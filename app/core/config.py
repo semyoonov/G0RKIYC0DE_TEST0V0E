@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     local_tts_binary: str = "espeak-ng"
     local_tts_voice: str = "ru"
     local_tts_speed: int = 150
+    cloud_tts_api_key: str = ""
+    cloud_tts_url: str = "wss://foundation-models.api.cloud.ru/v1/realtime"
+    cloud_tts_model: str = "GigaChat/SaluteSpeech"
+    cloud_tts_voice: str = "Mer-Operator"
+    cloud_tts_timeout_seconds: float = 45.0
 
     vosk_model_path: str = "models/vosk-model-small-ru-0.22"
     ffmpeg_binary: str = "ffmpeg"
@@ -100,15 +105,32 @@ class Settings(BaseSettings):
         return bool(self.sber_tts_credentials.strip())
 
     @property
+    def cloud_tts_available(self) -> bool:
+        return bool(self.cloud_tts_api_key.strip())
+
+    @property
+    def resolved_tts_backend(self) -> str:
+        backend = self.tts_backend.strip().lower()
+        if backend in {"cloud", "sber", "local"}:
+            return backend
+        if self.cloud_tts_available:
+            return "cloud"
+        if self.sber_tts_available:
+            return "sber"
+        return "local"
+
+    @property
     def tts_enabled(self) -> bool:
         backend = self.tts_backend.strip().lower()
         if backend == "off":
             return False
+        if backend == "cloud":
+            return self.cloud_tts_available
         if backend == "sber":
             return self.sber_tts_available
         if backend == "local":
             return self.local_tts_enabled
-        return self.sber_tts_available or self.local_tts_enabled
+        return self.cloud_tts_available or self.sber_tts_available or self.local_tts_enabled
 
     @property
     def telegram_enabled(self) -> bool:

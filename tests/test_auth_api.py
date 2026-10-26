@@ -53,6 +53,7 @@ class FakeAssistant:
         text: str,
         *,
         speak: bool = False,
+        closing: bool = False,
     ) -> AssistantResponse:
         self.text_calls.append((platform, external_user_id, text))
         return AssistantResponse(text=f"Ответ: {text}", events=[make_event(1)])
