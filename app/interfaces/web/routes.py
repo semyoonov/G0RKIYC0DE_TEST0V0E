@@ -48,6 +48,17 @@ class ChatPayload(BaseModel):
         return stripped
 
 
+class SpeechPayload(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+    voice: str | None = Field(default=None, max_length=32)
+
+
+class TelemetryPayload(BaseModel):
+    event: str = Field(min_length=1, max_length=64)
+    phase: str | None = Field(default=None, max_length=32)
+    detail: str | None = Field(default=None, max_length=200)
+
+
 def _serialize_event(event: EventRead) -> dict[str, Any]:
     return event.model_dump(mode="json")
 
@@ -146,6 +157,32 @@ def build_router(
         await _conversation_owner(request, auth, Platform.WEB, DEFAULT_CLIENT_ID)
         warmed = await assistant.prewarm()
         return {"status": "ok", "warmed": bool(warmed)}
+
+    @router.post("/api/speech")
+    async def speech(payload: SpeechPayload, request: Request) -> dict[str, Any]:
+        await _conversation_owner(request, auth, Platform.WEB, DEFAULT_CLIENT_ID)
+        result = await assistant.speak(payload.text, voice=payload.voice)
+        if result is None:
+            return {"audio": None, "audio_mime": None, "audio_format": None}
+        audio, mime = result
+        return {
+            "audio": base64.b64encode(audio).decode("ascii"),
+            "audio_mime": mime,
+            "audio_format": "opus",
+        }
+
+    @router.post("/api/telemetry")
+    async def telemetry(payload: TelemetryPayload, request: Request) -> dict[str, Any]:
+        peer = request.client.host if request.client else "-"
+        # Only the shape of the event is logged: no user text ever reaches this endpoint.
+        log.info(
+            "client telemetry: event=%s phase=%s detail=%s peer=%s",
+            payload.event,
+            payload.phase or "-",
+            payload.detail or "-",
+            peer,
+        )
+        return {"ok": True}
 
     @router.post("/api/voice")
     async def voice(

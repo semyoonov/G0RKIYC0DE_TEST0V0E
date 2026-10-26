@@ -131,6 +131,24 @@ class AssistantService:
             )
         return response
 
+    async def speak(self, text: str, *, voice: str | None = None) -> tuple[bytes, str] | None:
+        """Synthesises text on demand so the client can render the reply before its audio."""
+        if self._tts is None or not self._settings.tts_enabled:
+            return None
+        normalized = " ".join((text or "").split())
+        if not normalized:
+            return None
+        requested = _normalize_audio_format(self._settings.sber_tts_format)
+        try:
+            audio = await self._tts.synthesize(normalized, audio_format=requested, voice=voice)
+        except AssistantError as error:
+            log.warning("speech synthesis failed: %s", error)
+            return None
+        if not audio:
+            return None
+        mime = AssistantResponse(text="", audio=audio, audio_format=requested).audio_mime_type
+        return audio, mime or "application/octet-stream"
+
     async def prewarm(self) -> bool:
         """Sends the system prompt ahead of the first utterance so the first answer starts faster."""
         if self._llm is None or not self._settings.gigachat_enabled:

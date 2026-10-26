@@ -343,3 +343,25 @@ async def test_chat_passes_the_chosen_voice_to_tts(session_factory, cloud_settin
 
     assert response.audio == b"opus-bytes"
     assert tts.voices == ["Bab-Energetic"]
+
+
+async def test_speak_synthesises_text_on_demand(session_factory, cloud_settings, cache):
+    tts = FakeTTS()
+    assistant = AssistantService(
+        session_factory, cloud_settings, llm=FakeLLM(), tts=tts, cache=cache
+    )
+
+    result = await assistant.speak("  Встреча завтра в 10:00  ", voice="Gli-Operator")
+
+    assert result is not None
+    audio, mime = result
+    assert audio == b"opus-bytes"
+    assert mime == "audio/ogg"
+    assert tts.calls == [("Встреча завтра в 10:00", "opus")]
+    assert tts.voices == ["Gli-Operator"]
+
+
+async def test_speak_without_tts_returns_nothing(session_factory, settings, cache):
+    assistant = AssistantService(session_factory, settings, llm=FakeLLM(), tts=None, cache=cache)
+
+    assert await assistant.speak("Привет") is None

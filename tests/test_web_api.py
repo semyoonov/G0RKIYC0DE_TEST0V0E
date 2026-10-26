@@ -43,6 +43,7 @@ class FakeAssistant:
         self.fail = fail
         self.prewarm_calls = 0
         self.voices: list[str | None] = []
+        self.speech_calls: list[tuple[str, str | None]] = []
         self.text_calls: list[tuple[Platform, str, str, bool, bool]] = []
         self.voice_calls: list[tuple[Platform, str, bytes, str | None, bool]] = []
         self.list_calls: list[tuple[Platform, str, Period]] = []
@@ -51,6 +52,10 @@ class FakeAssistant:
     async def prewarm(self) -> bool:
         self.prewarm_calls += 1
         return True
+
+    async def speak(self, text: str, *, voice: str | None = None):
+        self.speech_calls.append((text, voice))
+        return b"OPUS-SPEECH", "audio/ogg"
 
     async def handle_text(
         self,
@@ -315,3 +320,45 @@ async def test_chat_forwards_the_selected_voice() -> None:
 
     assert response.status_code == 200
     assert assistant.voices == ["Kaz-Lifelike"]
+
+
+async def test_speech_endpoint_returns_audio_for_text() -> None:
+    assistant = FakeAssistant()
+    response = await request(
+        build_app(assistant),
+        "POST",
+        "/api/speech",
+        json={"text": "Встреча завтра в 10:00", "voice": "Bab-Energetic"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert base64.b64decode(body["audio"]) == b"OPUS-SPEECH"
+    assert body["audio_mime"] == "audio/ogg"
+    assert assistant.speech_calls == [("Встреча завтра в 10:00", "Bab-Energetic")]
+
+
+async def test_speech_endpoint_is_quiet_when_tts_is_off() -> None:
+    assistant = FakeAssistant()
+
+    async def no_speech(text: str, *, voice: str | None = None):
+        return None
+
+    assistant.speak = no_speech  # type: ignore[assignment]
+    response = await request(build_app(assistant), "POST", "/api/speech", json={"text": "Привет"})
+
+    assert response.status_code == 200
+    assert response.json()["audio"] is None
+
+
+async def test_telemetry_endpoint_accepts_client_events() -> None:
+    assistant = FakeAssistant()
+    response = await request(
+        build_app(assistant),
+        "POST",
+        "/api/telemetry",
+        json={"event": "phase", "phase": "speaking", "detail": "barge-in armed"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
