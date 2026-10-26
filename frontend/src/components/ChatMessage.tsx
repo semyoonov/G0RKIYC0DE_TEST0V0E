@@ -7,6 +7,8 @@ interface ChatMessageProps {
   entry: ChatEntry;
   timezone: string;
   autoPlayAudio?: boolean;
+  /** Speech for this reply is being generated right now. */
+  synthesizing?: boolean;
   onComplete: (eventId: number) => Promise<void> | void;
   /** Called with the entry id when the reply audio finishes. */
   onReplyAudioEnd?: (entryId: string) => void;
@@ -16,6 +18,7 @@ export function ChatMessage({
   entry,
   timezone,
   autoPlayAudio = true,
+  synthesizing = false,
   onComplete,
   onReplyAudioEnd,
 }: ChatMessageProps) {
@@ -52,6 +55,12 @@ export function ChatMessage({
       <div className="max-w-[92%] break-words rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm leading-relaxed text-ink">
         {reply.reply}
       </div>
+      {synthesizing ? (
+        <p className="flex items-center gap-2 px-1 text-[11px] text-ink-muted" data-testid="speech-pending">
+          <span className="size-1.5 animate-pulse rounded-full bg-accent" aria-hidden="true" />
+          Озвучиваю ответ…
+        </p>
+      ) : null}
       {action ? (
         <p className="px-1 text-[11px] uppercase tracking-[0.12em] text-ink-dim">{action}</p>
       ) : null}

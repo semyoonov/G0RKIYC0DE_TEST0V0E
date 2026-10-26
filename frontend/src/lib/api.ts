@@ -7,6 +7,7 @@ import type {
   SessionPlatform,
 } from "../types";
 import type { ConversationPhase } from "./conversation";
+import { SpeechCache, speechCacheKey } from "./speechCache";
 
 const CLIENT_STORAGE_KEY = "assistant_client_id";
 export const SESSION_TOKEN_STORAGE_KEY = "assistant_session_token";
@@ -205,20 +206,46 @@ export interface SpeechResult {
   audio_format?: string | null;
 }
 
+/** Answers already voiced in this page session; repeats skip the network. */
+const speechCache = new SpeechCache();
+
 /** Synthesises speech for an already rendered reply; abortable by the caller. */
 export async function postSpeech(
   text: string,
   voice = "",
   signal?: AbortSignal,
 ): Promise<SpeechResult> {
-  const payload: { text: string; voice?: string } = { text: text.slice(0, SPEECH_TEXT_LIMIT) };
+  const capped = text.slice(0, SPEECH_TEXT_LIMIT);
+  const key = speechCacheKey(capped, voice);
+  const cached = speechCache.get(key);
+  if (cached) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const restored: SpeechResult = { audio: cached.audio, audio_mime: cached.mime };
+    if (cached.format) restored.audio_format = cached.format;
+    return restored;
+  }
+
+  const payload: { text: string; voice?: string } = { text: capped };
   if (voice) payload.voice = voice;
-  return requestWithSession<SpeechResult>("/api/speech", {
+  const result = await requestWithSession<SpeechResult>("/api/speech", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     signal,
   });
+  if (result.audio) {
+    speechCache.set(key, {
+      audio: result.audio,
+      mime: result.audio_mime,
+      format: result.audio_format,
+    });
+  }
+  return result;
+}
+
+/** Test hook: forget every cached answer. */
+export function clearSpeechCache(): void {
+  speechCache.clear();
 }
 
 const TELEMETRY_DETAIL_LIMIT = 180;

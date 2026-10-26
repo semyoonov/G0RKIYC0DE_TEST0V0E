@@ -35,6 +35,8 @@ export interface ChatController {
   entries: ChatEntry[];
   pending: boolean;
   status: string;
+  /** Assistant entry whose speech is being synthesised right now. */
+  synthesizingEntryId: string | null;
   sendText: (text: string, options?: SendTextOptions) => Promise<ChatTurnResult>;
   sendVoice: (blob: Blob) => Promise<void>;
   /** Attaches speech to an assistant entry that is already on screen. */
@@ -53,6 +55,7 @@ export function useChat(): ChatController {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState("");
+  const [synthesizingEntryId, setSynthesizingEntryId] = useState<string | null>(null);
   const counter = useRef(0);
 
   const nextId = useCallback(() => {
@@ -97,6 +100,7 @@ export function useChat(): ChatController {
         }
         if (reply.audio) return { reply, error: null, hasAudio: true };
 
+        setSynthesizingEntryId(replyId);
         try {
           // Speak the assistant's answer, not the user's utterance.
           const speech = await postSpeech(reply.reply, options.voice ?? "", options.signal);
@@ -108,6 +112,8 @@ export function useChat(): ChatController {
             options.onSpeechError?.(errorMessage(speechError));
           }
           return { reply, error: null, hasAudio: false };
+        } finally {
+          setSynthesizingEntryId((current) => (current === replyId ? null : current));
         }
       } catch (error) {
         const message = errorMessage(error);
@@ -178,6 +184,7 @@ export function useChat(): ChatController {
     entries,
     pending,
     status,
+    synthesizingEntryId,
     sendText,
     sendVoice,
     attachAudio,

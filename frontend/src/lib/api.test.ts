@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatReply } from "../types";
 import {
   clearSessionToken,
+  clearSpeechCache,
   postChat,
   postSpeech,
   reportTelemetry,
@@ -40,6 +41,7 @@ const REPLY: ChatReply = {
 
 beforeEach(() => {
   clearSessionToken();
+  clearSpeechCache();
   window.localStorage.clear();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -140,6 +142,55 @@ describe("postSpeech", () => {
     expect(String(requestBody(init).text)).toHaveLength(4000);
     expect(init?.signal).toBe(controller.signal);
     expect(requestBody(init)).not.toHaveProperty("voice");
+  });
+});
+
+describe("postSpeech cache", () => {
+  it("does not synthesise the same answer twice", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ audio: "QUJD", audio_mime: "audio/ogg", audio_format: "opus" }),
+    );
+
+    const first = await postSpeech("Готово", "v1");
+    const second = await postSpeech("Готово", "v1");
+
+    expect(second).toEqual(first);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Another voice is a different answer.
+    await postSpeech("Готово", "v2");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Another text is a different answer.
+    await postSpeech("Другое", "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not cache a failed or empty synthesis", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(jsonResponse({ audio: "QUJD", audio_mime: "audio/ogg" }));
+
+    await expect(postSpeech("Готово", "v1")).rejects.toBeInstanceOf(TypeError);
+    const retry = await postSpeech("Готово", "v1");
+    expect(retry.audio).toBe("QUJD");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockResolvedValue(jsonResponse({ audio: null, audio_mime: null }));
+    await postSpeech("Тишина", "v1");
+    await postSpeech("Тишина", "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not serve cached audio to an already aborted caller", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ audio: "QUJD", audio_mime: "audio/ogg" }));
+    await postSpeech("Готово", "v1");
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(postSpeech("Готово", "v1", controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

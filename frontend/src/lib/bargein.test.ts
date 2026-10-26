@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   BARGE_IN_ENERGY_THRESHOLD,
   BARGE_IN_HOLD_MS,
+  BARGE_IN_MEAN_THRESHOLD,
+  BARGE_IN_WINDOW_MS,
   BargeInDetector,
 } from "./bargein";
 import { VAD_ENERGY_THRESHOLD } from "./vad";
@@ -20,10 +22,22 @@ function fakeClock(start = 1_000) {
   };
 }
 
+/** Feeds `count` frames of `energy` spaced by the frame interval. */
+function feed(detector: BargeInDetector, clock: ReturnType<typeof fakeClock>, energy: number, count: number, step = 40) {
+  let fired = false;
+  for (let index = 0; index < count; index += 1) {
+    clock.advance(step);
+    if (detector.noteEnergy(energy, clock.now)) fired = true;
+  }
+  return fired;
+}
+
 describe("barge-in constants", () => {
-  it("sits clearly above the speech threshold", () => {
+  it("sits above the speech threshold and below a shout", () => {
     expect(BARGE_IN_ENERGY_THRESHOLD).toBeGreaterThan(VAD_ENERGY_THRESHOLD);
+    expect(BARGE_IN_MEAN_THRESHOLD).toBeLessThan(BARGE_IN_ENERGY_THRESHOLD);
     expect(BARGE_IN_HOLD_MS).toBeGreaterThanOrEqual(250);
+    expect(BARGE_IN_WINDOW_MS).toBeGreaterThan(BARGE_IN_HOLD_MS);
   });
 });
 
@@ -31,107 +45,59 @@ describe("BargeInDetector", () => {
   it("never fires on quiet input", () => {
     const clock = fakeClock();
     const detector = new BargeInDetector();
-    for (let index = 0; index < 200; index += 1) {
-      clock.advance(40);
-      expect(detector.noteEnergy(0.02, clock.now)).toBe(false);
-    }
+    expect(feed(detector, clock, 0.02, 200)).toBe(false);
     expect(detector.triggered).toBe(false);
   });
 
-  it("ignores a single click even when it is loud", () => {
+  it("ignores a single loud click", () => {
     const clock = fakeClock();
     const detector = new BargeInDetector();
-
-    expect(detector.noteEnergy(0.4, clock.now)).toBe(false);
-    for (let index = 0; index < 50; index += 1) {
-      clock.advance(40);
-      expect(detector.noteEnergy(0.001, clock.now)).toBe(false);
-    }
-
+    expect(feed(detector, clock, 0.4, 1)).toBe(false);
+    expect(feed(detector, clock, 0.001, 50)).toBe(false);
     expect(detector.triggered).toBe(false);
   });
 
-  it("does not fire while the loud burst is shorter than the hold window", () => {
+  it("fires on speech that dips between words", () => {
     const clock = fakeClock();
     const detector = new BargeInDetector();
-
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    clock.advance(200);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    expect(detector.triggered).toBe(false);
-  });
-
-  it("fires once the input stays loud for the hold window", () => {
-    const clock = fakeClock();
-    const detector = new BargeInDetector();
-
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    clock.advance(BARGE_IN_HOLD_MS - 1);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    clock.advance(1);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(true);
-
-    // One interruption per burst: further frames are ignored until reset.
-    clock.advance(40);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    expect(detector.triggered).toBe(true);
-  });
-
-  it("survives a dip between words", () => {
-    const clock = fakeClock();
-    const detector = new BargeInDetector();
-
-    // Loud input, then a short quiet gap that would reset a strict window.
-    detector.noteEnergy(0.08, clock.now);
-    clock.advance(200);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    clock.advance(40);
-    expect(detector.noteEnergy(0.001, clock.now)).toBe(false);
-    clock.advance(40);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    clock.advance(200);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(true);
-  });
-
-  it("drains the accumulated loud time during silence", () => {
-    const clock = fakeClock();
-    const detector = new BargeInDetector();
-
-    detector.noteEnergy(0.08, clock.now);
-    clock.advance(200);
-    detector.noteEnergy(0.08, clock.now);
+    let fired = false;
     for (let index = 0; index < 20; index += 1) {
-      clock.advance(100);
-      expect(detector.noteEnergy(0.001, clock.now)).toBe(false);
+      if (feed(detector, clock, index % 2 === 0 ? 0.09 : 0.005, 1)) fired = true;
     }
+    expect(fired).toBe(true);
+  });
+
+  it("does not fire before the window has lasted long enough", () => {
+    const clock = fakeClock();
+    const detector = new BargeInDetector();
+    expect(feed(detector, clock, 0.09, 5)).toBe(false);
     expect(detector.triggered).toBe(false);
   });
 
-  it("ignores non-finite values and re-arms after reset", () => {
+  it("fires once, then stays quiet until reset", () => {
     const clock = fakeClock();
     const detector = new BargeInDetector();
-
-    expect(detector.noteEnergy(Number.NaN, clock.now)).toBe(false);
-    expect(detector.noteEnergy(0.5, Number.NaN)).toBe(false);
-
-    detector.noteEnergy(0.2, clock.now);
-    clock.advance(BARGE_IN_HOLD_MS);
-    expect(detector.noteEnergy(0.2, clock.now)).toBe(true);
+    expect(feed(detector, clock, 0.09, 20)).toBe(true);
+    expect(feed(detector, clock, 0.09, 20)).toBe(false);
+    expect(detector.triggered).toBe(true);
 
     detector.reset();
     expect(detector.triggered).toBe(false);
-    expect(detector.noteEnergy(0.2, clock.now)).toBe(false);
-    clock.advance(BARGE_IN_HOLD_MS);
-    expect(detector.noteEnergy(0.2, clock.now)).toBe(true);
+    expect(feed(detector, clock, 0.09, 20)).toBe(true);
   });
 
-  it("supports custom threshold and hold options", () => {
+  it("ignores non-finite values", () => {
     const clock = fakeClock();
-    const detector = new BargeInDetector({ threshold: 0.2, holdMs: 100 });
+    const detector = new BargeInDetector();
+    expect(detector.noteEnergy(Number.NaN, clock.now)).toBe(false);
+    expect(detector.noteEnergy(0.5, Number.NaN)).toBe(false);
+    expect(detector.triggered).toBe(false);
+  });
 
-    expect(detector.noteEnergy(0.1, clock.now)).toBe(false);
-    expect(detector.noteEnergy(0.25, clock.now)).toBe(false);
-    clock.advance(100);
-    expect(detector.noteEnergy(0.25, clock.now)).toBe(true);
+  it("supports custom thresholds", () => {
+    const clock = fakeClock();
+    const detector = new BargeInDetector({ threshold: 0.2, meanThreshold: 0.1, holdMs: 100, windowMs: 200 });
+    expect(feed(detector, clock, 0.1, 20)).toBe(false);
+    expect(feed(detector, clock, 0.25, 20)).toBe(true);
   });
 });

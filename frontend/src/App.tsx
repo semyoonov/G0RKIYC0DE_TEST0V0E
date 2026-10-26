@@ -158,9 +158,11 @@ export default function App() {
   };
   const status = voice.busy
     ? "Распознаю…"
-    : conversation.active
-      ? conversation.status
-      : chat.status || conversation.hint;
+    : chat.synthesizingEntryId
+      ? "Озвучиваю ответ…"
+      : conversation.active
+        ? conversation.status
+        : chat.status || conversation.hint;
   const composerDisabled = chat.pending || voice.busy;
 
   return (
@@ -237,6 +239,7 @@ export default function App() {
             entry={entry}
             timezone={timezone}
             autoPlayAudio={speakReplies}
+            synthesizing={chat.synthesizingEntryId === entry.id}
             onComplete={chat.complete}
             onReplyAudioEnd={handleReplyAudioEnd}
           />

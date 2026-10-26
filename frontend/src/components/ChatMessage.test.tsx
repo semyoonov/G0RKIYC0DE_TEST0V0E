@@ -112,4 +112,32 @@ describe("ChatMessage", () => {
     expect(screen.getByText("Прослушать ответ")).toBeInTheDocument();
     expect(onReplyAudioEnd).toHaveBeenCalledWith("m5");
   });
+
+  it("shows that the answer is being voiced while speech is generated", () => {
+    const entry = { id: "m6", role: "assistant" as const, reply: makeReply() };
+    const { rerender } = render(
+      <ChatMessage
+        entry={entry}
+        timezone="Europe/Moscow"
+        autoPlayAudio={false}
+        synthesizing
+        onComplete={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Озвучиваю ответ…")).toBeInTheDocument();
+
+    rerender(
+      <ChatMessage
+        entry={{ ...entry, audio: { data: "QUJD", mime: "audio/ogg" } }}
+        timezone="Europe/Moscow"
+        autoPlayAudio={false}
+        synthesizing={false}
+        onComplete={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText("Озвучиваю ответ…")).not.toBeInTheDocument();
+    expect(screen.getByText("Прослушать ответ")).toBeInTheDocument();
+  });
 });

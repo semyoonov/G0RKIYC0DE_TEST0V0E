@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { clearSessionToken } from "../lib/api";
+import { clearSessionToken, clearSpeechCache } from "../lib/api";
 import type { ChatEntry, ChatReply } from "../types";
 import { useChat, type ChatTurnResult } from "./useChat";
 
@@ -40,6 +40,7 @@ const REPLY: ChatReply = {
 
 beforeEach(() => {
   clearSessionToken();
+  clearSpeechCache();
   window.localStorage.clear();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -89,6 +90,8 @@ describe("useChat.sendText", () => {
     expect(assistant?.audio).toBeUndefined();
     // Sends stay serialised until the turn (including its voice) is done.
     expect(result.current.pending).toBe(true);
+    // The UI can show that this reply is being voiced right now.
+    expect(result.current.synthesizingEntryId).toBe(assistant?.id);
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/speech");
     const speechBody = JSON.parse(
       String(fetchMock.mock.calls[1]?.[1]?.body),
@@ -105,6 +108,7 @@ describe("useChat.sendText", () => {
 
     const finished = await turn;
     expect(finished.hasAudio).toBe(true);
+    expect(result.current.synthesizingEntryId).toBeNull();
     expect(findAssistant(result.current.entries, assistant?.id)?.audio).toEqual({
       data: "QUJD",
       mime: "audio/ogg",
@@ -127,6 +131,8 @@ describe("useChat.sendText", () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as Record<string, unknown>;
     expect(body.speak).toBe(false);
     expect(findAssistant(result.current.entries)?.audio).toBeUndefined();
+    // Speak-off never enters the "voicing" state.
+    expect(result.current.synthesizingEntryId).toBeNull();
   });
 
   it("keeps the rendered reply when speech synthesis fails", async () => {
@@ -147,6 +153,7 @@ describe("useChat.sendText", () => {
     expect(onSpeechError).toHaveBeenCalledTimes(1);
     expect(findAssistant(result.current.entries)?.reply.reply).toBe(REPLY.reply);
     expect(result.current.entries.some((entry) => entry.role === "error")).toBe(false);
+    expect(result.current.synthesizingEntryId).toBeNull();
   });
 
   it("returns the inline audio instead of asking for speech", async () => {
