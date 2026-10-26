@@ -151,11 +151,29 @@ export function useVoiceConversation(
   }, [active, phase, subscribeEnergy, armCommitTimer, clearCommitTimer]);
 
   const partial = options.voice.partial;
+  const lastPartialRef = useRef("");
 
   useEffect(() => {
-    if (!active || phase !== "listening") return;
-    detectorRef.current?.setPartial(partial);
-    armCommitTimer();
+    if (!active || phase !== "listening") {
+      lastPartialRef.current = "";
+      return;
+    }
+    const detector = detectorRef.current;
+    if (partial) {
+      lastPartialRef.current = partial;
+      detector?.setPartial(partial);
+      armCommitTimer();
+      return;
+    }
+    if (!lastPartialRef.current) return;
+    // The recognizer finalised the phrase itself: an empty partial that follows a
+    // non-empty one is its own endpoint signal, so the turn commits without the
+    // silence window.
+    lastPartialRef.current = "";
+    detector?.setPartial("");
+    if (detector?.spoke) {
+      void loopRef.current?.commit();
+    }
   }, [partial, active, phase, armCommitTimer]);
 
   const start = useCallback(async () => {

@@ -89,6 +89,37 @@ describe("useVoiceConversation auto-commit", () => {
     unmount();
   });
 
+  it("commits as soon as the recognizer clears its own partial", async () => {
+    const fake = makeFakeVoice();
+    const sendUtterance = vi.fn(async () => ({ ok: true, hasAudio: false }));
+    const props = {
+      voice: fake.voice,
+      sendUtterance,
+      reportError: vi.fn(),
+    };
+    const { result, rerender, unmount } = renderHook(
+      (current: typeof props) => useVoiceConversation(current),
+      { initialProps: props },
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => {
+      fake.emit(0.08);
+    });
+    rerender({ ...props, voice: { ...fake.voice, partial: "что у меня на завтра" } });
+    expect(fake.voice.commitTurn).not.toHaveBeenCalled();
+
+    await act(async () => {
+      rerender({ ...props, voice: { ...fake.voice, partial: "" } });
+    });
+
+    expect(fake.voice.commitTurn).toHaveBeenCalledTimes(1);
+    expect(sendUtterance).toHaveBeenCalledWith("поставь задачу", { closing: false });
+    unmount();
+  });
+
   it("does not commit a silent turn even with a partial transcript", async () => {
     vi.useFakeTimers();
     const fake = makeFakeVoice();
