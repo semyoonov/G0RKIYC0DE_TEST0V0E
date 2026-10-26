@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { VoiceTurnOutcome } from "../lib/conversation";
+import { pcm16Energy } from "../lib/vad";
+
 const TARGET_RATE = 16000;
 const FRAME_SIZE = 640;
 const READY_TIMEOUT_MS = 4000;
@@ -8,6 +11,7 @@ const FINAL_TIMEOUT_MS = 9000;
 export const MIC_DENIED_TEXT = "Не удалось включить микрофон. Разрешите доступ в браузере.";
 export const MIC_UNAVAILABLE_TEXT = "Запись с микрофона недоступна в этом браузере.";
 export const VOICE_ERROR_TEXT = "Не удалось распознать речь. Попробуйте ещё раз.";
+export const STREAM_START_TEXT = "Не удалось начать запись. Попробуйте ещё раз.";
 
 export type VoiceOutcome =
   | { kind: "text"; text: string }
@@ -30,6 +34,7 @@ interface StreamState {
   resolveFinal: (message: FinalMessage) => void;
   rejectReady: (error: Error) => void;
   ready: Promise<void>;
+  intentional: boolean;
 }
 
 interface MediaState {
@@ -42,9 +47,18 @@ export interface VoiceController {
   busy: boolean;
   partial: string;
   error: string | null;
+  /** True when this browser can stream PCM frames and show server partials. */
+  streaming: boolean;
+  /** One-shot path kept for the regular "Голосом" button and the blob fallback. */
   start: () => Promise<void>;
   stop: () => Promise<VoiceOutcome>;
   clearError: () => void;
+  /** Conversation-mode primitives: one microphone, one streaming turn at a time. */
+  openMicrophone: () => Promise<boolean>;
+  beginTurn: () => Promise<boolean>;
+  commitTurn: () => Promise<VoiceTurnOutcome>;
+  releaseMicrophone: () => void;
+  subscribeEnergy: (handler: (energy: number) => void) => () => void;
 }
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
@@ -66,17 +80,37 @@ function canStream(): boolean {
   );
 }
 
+function disposeStreamResources(stream: StreamState): void {
+  try {
+    if (stream.socket && stream.socket.readyState <= WebSocket.OPEN) stream.socket.close();
+  } catch {
+    // Socket is already gone.
+  }
+  if (stream.node) stream.node.port.onmessage = null;
+  [stream.source, stream.node, stream.sink].forEach((node) => {
+    try {
+      node?.disconnect();
+    } catch {
+      // Node was never connected.
+    }
+  });
+  if (stream.context) void stream.context.close().catch(() => {});
+}
+
 export function useVoiceStream(clientId: string): VoiceController {
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [partial, setPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [streaming] = useState(canStream);
   const streamRef = useRef<StreamState | null>(null);
   const mediaRef = useRef<MediaState | null>(null);
   const micRef = useRef<MediaStream | null>(null);
+  const energyHandlers = useRef(new Set<(energy: number) => void>());
   const mounted = useRef(true);
   const startingRef = useRef(false);
   const stoppingRef = useRef(false);
+  const openingRef = useRef<Promise<boolean> | null>(null);
 
   const stopMicrophone = useCallback(() => {
     const mic = micRef.current;
@@ -87,21 +121,7 @@ export function useVoiceStream(clientId: string): VoiceController {
   const cleanupStream = useCallback(() => {
     const stream = streamRef.current;
     streamRef.current = null;
-    if (!stream) return;
-    try {
-      if (stream.socket && stream.socket.readyState <= WebSocket.OPEN) stream.socket.close();
-    } catch {
-      // Socket is already gone.
-    }
-    if (stream.node) stream.node.port.onmessage = null;
-    [stream.source, stream.node, stream.sink].forEach((node) => {
-      try {
-        node?.disconnect();
-      } catch {
-        // Node was never connected.
-      }
-    });
-    if (stream.context) void stream.context.close().catch(() => {});
+    if (stream) disposeStreamResources(stream);
   }, []);
 
   const cleanupMedia = useCallback(() => {
@@ -120,11 +140,49 @@ export function useVoiceStream(clientId: string): VoiceController {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      openingRef.current = null;
       cleanupStream();
       cleanupMedia();
       stopMicrophone();
     };
   }, [cleanupMedia, cleanupStream, stopMicrophone]);
+
+  const subscribeEnergy = useCallback((handler: (energy: number) => void) => {
+    energyHandlers.current.add(handler);
+    return () => {
+      energyHandlers.current.delete(handler);
+    };
+  }, []);
+
+  const acquireMicrophone = useCallback(async (): Promise<boolean> => {
+    setError(null);
+    if (typeof navigator.mediaDevices?.getUserMedia !== "function") {
+      setError(MIC_UNAVAILABLE_TEXT);
+      return false;
+    }
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mounted.current) {
+        mic.getTracks().forEach((track) => track.stop());
+        return false;
+      }
+      micRef.current = mic;
+      return true;
+    } catch {
+      if (mounted.current) setError(MIC_DENIED_TEXT);
+      return false;
+    }
+  }, []);
+
+  const openMicrophone = useCallback((): Promise<boolean> => {
+    if (micRef.current) return Promise.resolve(true);
+    if (openingRef.current) return openingRef.current;
+    const pending = acquireMicrophone().finally(() => {
+      openingRef.current = null;
+    });
+    openingRef.current = pending;
+    return pending;
+  }, [acquireMicrophone]);
 
   const startStream = useCallback(async (): Promise<boolean> => {
     const mic = micRef.current;
@@ -140,6 +198,7 @@ export function useVoiceStream(clientId: string): VoiceController {
       resolveFinal: () => {},
       rejectReady: () => {},
       ready: Promise.resolve(),
+      intentional: false,
     };
 
     try {
@@ -169,6 +228,15 @@ export function useVoiceStream(clientId: string): VoiceController {
         stream.resolveFinal = resolve;
       });
 
+      const failLiveStream = () => {
+        if (!mounted.current || streamRef.current !== stream || stream.intentional) return;
+        setError("Соединение с сервером прервано. Попробуйте ещё раз.");
+        cleanupStream();
+        stopMicrophone();
+        setPartial("");
+        setRecording(false);
+      };
+
       const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(
         `${scheme}//${window.location.host}/ws/voice?client_id=${encodeURIComponent(clientId)}`,
@@ -176,6 +244,11 @@ export function useVoiceStream(clientId: string): VoiceController {
       socket.binaryType = "arraybuffer";
       stream.socket = socket;
       streamRef.current = stream;
+      if (!mounted.current) {
+        streamRef.current = null;
+        disposeStreamResources(stream);
+        return false;
+      }
 
       socket.addEventListener("message", (event) => {
         let message: { type?: string; text?: string; message?: string } | null = null;
@@ -188,7 +261,7 @@ export function useVoiceStream(clientId: string): VoiceController {
         if (message.type === "ready") {
           resolveReady();
         } else if (message.type === "partial") {
-          if (mounted.current) setPartial(message.text || "");
+          if (mounted.current && !stream.intentional) setPartial(message.text || "");
         } else if (message.type === "final") {
           stream.resolveFinal({ type: "final", text: message.text || "" });
         } else if (message.type === "error") {
@@ -198,32 +271,36 @@ export function useVoiceStream(clientId: string): VoiceController {
       socket.addEventListener("error", () => {
         if (!readySettled) stream.rejectReady(new Error("voice stream failed to open"));
         stream.resolveFinal({ type: "error", text: VOICE_ERROR_TEXT });
+        if (readySettled) failLiveStream();
       });
-      socket.addEventListener("close", (event) => {
+      socket.addEventListener("close", () => {
         stream.resolveFinal({ type: "closed" });
         if (!readySettled) {
           stream.rejectReady(new Error("voice stream closed before ready"));
           return;
         }
-        if (mounted.current && streamRef.current === stream && event.code !== 1000) {
-          setError("Соединение с сервером прервано. Попробуйте ещё раз.");
-          cleanupStream();
-          stopMicrophone();
-          setRecording(false);
-        }
+        failLiveStream();
       });
       stream.node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+        const energy = pcm16Energy(event.data);
+        energyHandlers.current.forEach((handler) => handler(energy));
         if (socket.readyState !== WebSocket.OPEN) return;
         socket.send(event.data);
       };
 
       await withTimeout(stream.ready, READY_TIMEOUT_MS);
+      if (!mounted.current) {
+        if (streamRef.current === stream) streamRef.current = null;
+        disposeStreamResources(stream);
+        return false;
+      }
       return true;
     } catch {
-      cleanupStream();
+      if (streamRef.current === stream) streamRef.current = null;
+      disposeStreamResources(stream);
       return false;
     }
-  }, [cleanupStream, clientId, stopMicrophone]);
+  }, [clientId, cleanupStream, stopMicrophone]);
 
   const startMedia = useCallback((): boolean => {
     const mic = micRef.current;
@@ -246,16 +323,7 @@ export function useVoiceStream(clientId: string): VoiceController {
     try {
       setError(null);
       setPartial("");
-      if (typeof navigator.mediaDevices?.getUserMedia !== "function") {
-        setError(MIC_UNAVAILABLE_TEXT);
-        return;
-      }
-      try {
-        micRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch {
-        setError(MIC_DENIED_TEXT);
-        return;
-      }
+      if (!(await openMicrophone())) return;
       if (canStream() && (await startStream())) {
         setRecording(true);
         return;
@@ -269,7 +337,7 @@ export function useVoiceStream(clientId: string): VoiceController {
     } finally {
       startingRef.current = false;
     }
-  }, [startMedia, startStream, stopMicrophone]);
+  }, [openMicrophone, startMedia, startStream, stopMicrophone]);
 
   const stopMedia = useCallback(async (): Promise<Blob | null> => {
     const media = mediaRef.current;
@@ -289,47 +357,135 @@ export function useVoiceStream(clientId: string): VoiceController {
     return blob.size > 0 ? blob : null;
   }, []);
 
-  const stop = useCallback(async (): Promise<VoiceOutcome> => {
-    if (stoppingRef.current) return null;
+  const finishStreamTurn = useCallback(async (): Promise<VoiceTurnOutcome> => {
+    const stream = streamRef.current;
+    if (!stream) return { kind: "empty" };
+    stream.intentional = true;
+    try {
+      if (stream.socket?.readyState === WebSocket.OPEN) {
+        stream.socket.send(JSON.stringify({ type: "stop" }));
+      }
+    } catch {
+      // The close handler still resolves the stream.
+    }
+    // Stop feeding frames to the server while it finalizes the transcript.
+    if (stream.node) stream.node.port.onmessage = null;
+    try {
+      stream.source?.disconnect();
+    } catch {
+      // The source was already disconnected.
+    }
+
+    let outcome: FinalMessage = { type: "timeout" };
+    try {
+      outcome = await withTimeout(stream.final, FINAL_TIMEOUT_MS);
+    } catch {
+      outcome = { type: "timeout" };
+    }
+    cleanupStream();
+    if (mounted.current) setPartial("");
+
+    if (outcome.type === "final") {
+      const text = (outcome.text ?? "").trim();
+      return text ? { kind: "text", text } : { kind: "empty" };
+    }
+    if (outcome.type === "error") {
+      return { kind: "error", message: outcome.text || VOICE_ERROR_TEXT };
+    }
+    return { kind: "error", message: outcome.text || VOICE_ERROR_TEXT };
+  }, [cleanupStream]);
+
+  const commitTurn = useCallback(async (): Promise<VoiceTurnOutcome> => {
+    if (stoppingRef.current) return { kind: "empty" };
     stoppingRef.current = true;
     setBusy(true);
     try {
-      const stream = streamRef.current;
-      if (stream) {
-        try {
-          if (stream.socket?.readyState === WebSocket.OPEN) {
-            stream.socket.send(JSON.stringify({ type: "stop" }));
-          }
-        } catch {
-          // The close handler still resolves the stream.
-        }
-        let outcome: FinalMessage = { type: "timeout" };
-        try {
-          outcome = await withTimeout(stream.final, FINAL_TIMEOUT_MS);
-        } catch {
-          outcome = { type: "timeout" };
-        }
-        cleanupStream();
-        stopMicrophone();
-        setRecording(false);
-        if (outcome.type === "final" && outcome.text) return { kind: "text", text: outcome.text };
-        return { kind: "error", message: outcome.text || VOICE_ERROR_TEXT };
-      }
-      if (mediaRef.current) {
-        const blob = await stopMedia();
-        stopMicrophone();
-        setRecording(false);
-        return blob ? { kind: "blob", blob } : { kind: "error", message: VOICE_ERROR_TEXT };
-      }
-      return null;
+      return await finishStreamTurn();
     } finally {
       stoppingRef.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }, [finishStreamTurn]);
+
+  const stop = useCallback(async (): Promise<VoiceOutcome> => {
+    if (stoppingRef.current) return null;
+    const stream = streamRef.current;
+    if (stream) {
+      const outcome = await commitTurn();
+      stopMicrophone();
+      if (mounted.current) setRecording(false);
+      if (outcome.kind === "text") return { kind: "text", text: outcome.text };
+      return {
+        kind: "error",
+        message: outcome.kind === "error" ? outcome.message : VOICE_ERROR_TEXT,
+      };
+    }
+    if (mediaRef.current) {
+      stoppingRef.current = true;
+      setBusy(true);
+      try {
+        const blob = await stopMedia();
+        stopMicrophone();
+        if (mounted.current) setRecording(false);
+        return blob ? { kind: "blob", blob } : { kind: "error", message: VOICE_ERROR_TEXT };
+      } finally {
+        stoppingRef.current = false;
+        if (mounted.current) setBusy(false);
+      }
+    }
+    return null;
+  }, [commitTurn, stopMedia, stopMicrophone]);
+
+  const beginTurn = useCallback(async (): Promise<boolean> => {
+    if (!micRef.current) return false;
+    if (!canStream()) {
+      setError(MIC_UNAVAILABLE_TEXT);
+      return false;
+    }
+    if (streamRef.current) return true;
+    setError(null);
+    setPartial("");
+    const started = await startStream();
+    if (!started) {
+      // A manual release stops the microphone; do not surface that as an error.
+      if (mounted.current && micRef.current) setError((current) => current ?? STREAM_START_TEXT);
+      return false;
+    }
+    if (!mounted.current || !streamRef.current) {
+      cleanupStream();
+      return false;
+    }
+    setRecording(true);
+    return true;
+  }, [cleanupStream, startStream]);
+
+  const releaseMicrophone = useCallback(() => {
+    openingRef.current = null;
+    cleanupStream();
+    cleanupMedia();
+    stopMicrophone();
+    if (mounted.current) {
+      setRecording(false);
       setBusy(false);
       setPartial("");
     }
-  }, [cleanupStream, stopMedia, stopMicrophone]);
+  }, [cleanupMedia, cleanupStream, stopMicrophone]);
 
   const clearError = useCallback(() => setError(null), []);
 
-  return { recording, busy, partial, error, start, stop, clearError };
+  return {
+    recording,
+    busy,
+    partial,
+    error,
+    streaming,
+    start,
+    stop,
+    clearError,
+    openMicrophone,
+    beginTurn,
+    commitTurn,
+    releaseMicrophone,
+    subscribeEnergy,
+  };
 }

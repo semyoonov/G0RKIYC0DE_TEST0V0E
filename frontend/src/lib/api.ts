@@ -162,12 +162,35 @@ export async function linkIdentity(code: string): Promise<AuthSession> {
   });
 }
 
-export async function postChat(text: string, clientId: string, speak = false): Promise<ChatReply> {
+export async function postChat(
+  text: string,
+  clientId: string,
+  speak = false,
+  closing = false,
+): Promise<ChatReply> {
+  const payload: { text: string; client_id: string; speak: boolean; closing?: boolean } = {
+    text,
+    client_id: clientId,
+    speak,
+  };
+  if (closing) payload.closing = true;
   return requestWithSession<ChatReply>("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, client_id: clientId, speak }),
+    body: JSON.stringify(payload),
   });
+}
+
+/**
+ * Warms the model for the next hands-free turn. It is best-effort by design:
+ * every failure is swallowed so the conversation never waits on it.
+ */
+export async function warmupChat(): Promise<void> {
+  try {
+    await fetch("/api/chat/warmup", withAuthorization({ method: "POST" }));
+  } catch {
+    // A warmup failure must stay invisible to the user.
+  }
 }
 
 export async function postVoice(blob: Blob, clientId: string): Promise<ChatReply> {

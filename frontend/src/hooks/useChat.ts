@@ -1,14 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { completeEvent, errorMessage, postChat, postVoice, readClientId } from "../lib/api";
-import type { ChatEntry } from "../types";
+import type { ChatEntry, ChatReply } from "../types";
+
+export interface ChatTurnResult {
+  reply: ChatReply | null;
+  error: string | null;
+}
 
 export interface ChatController {
   clientId: string;
   entries: ChatEntry[];
   pending: boolean;
   status: string;
-  sendText: (text: string, options?: { speak?: boolean }) => Promise<void>;
+  sendText: (
+    text: string,
+    options?: {
+      speak?: boolean;
+      closing?: boolean;
+      /** Reports the assistant entry id as soon as the reply is appended. */
+      onReplyEntry?: (entryId: string) => void;
+    },
+  ) => Promise<ChatTurnResult>;
   sendVoice: (blob: Blob) => Promise<void>;
   complete: (eventId: number) => Promise<void>;
   reportError: (message: string) => void;
@@ -31,17 +44,34 @@ export function useChat(): ChatController {
   }, []);
 
   const sendText = useCallback(
-    async (raw: string, options?: { speak?: boolean }) => {
+    async (
+      raw: string,
+      options?: {
+        speak?: boolean;
+        closing?: boolean;
+        onReplyEntry?: (entryId: string) => void;
+      },
+    ): Promise<ChatTurnResult> => {
       const text = raw.trim();
-      if (!text || pending) return;
+      if (!text || pending) return { reply: null, error: null };
       append({ id: nextId(), role: "user", text });
       setPending(true);
       setStatus("Обрабатываю…");
       try {
-        const reply = await postChat(text, clientId, options?.speak ?? false);
-        append({ id: nextId(), role: "assistant", reply });
+        const reply = await postChat(
+          text,
+          clientId,
+          options?.speak ?? false,
+          options?.closing ?? false,
+        );
+        const replyId = nextId();
+        append({ id: replyId, role: "assistant", reply });
+        options?.onReplyEntry?.(replyId);
+        return { reply, error: null };
       } catch (error) {
-        append({ id: nextId(), role: "error", text: errorMessage(error) });
+        const message = errorMessage(error);
+        append({ id: nextId(), role: "error", text: message });
+        return { reply: null, error: message };
       } finally {
         setPending(false);
         setStatus("");

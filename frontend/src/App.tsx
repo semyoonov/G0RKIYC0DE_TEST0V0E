@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 
-import { fetchMeta } from "./lib/api";
+import { fetchMeta, warmupChat } from "./lib/api";
 import { ChatMessage } from "./components/ChatMessage";
 import { Composer } from "./components/Composer";
 import { LinkPanel } from "./components/LinkPanel";
 import { LiveTranscript } from "./components/LiveTranscript";
 import { QuickActions } from "./components/QuickActions";
 import { useChat } from "./hooks/useChat";
+import { useVoiceConversation } from "./hooks/useVoiceConversation";
 import { useVoiceStream } from "./hooks/useVoiceStream";
 import { readSpeakReplies, writeSpeakReplies } from "./lib/preferences";
+import { useSession } from "./lib/session";
 
 const DEFAULT_QUICK_ACTIONS = ["Что у меня сегодня?", "Что на завтра?", "Что на этой неделе?"];
 
@@ -24,8 +26,44 @@ export default function App() {
   const [timezone, setTimezone] = useState(initialTimezone);
   const [quickActions, setQuickActions] = useState<string[]>(DEFAULT_QUICK_ACTIONS);
   const [speakReplies, setSpeakReplies] = useState(readSpeakReplies);
+  const session = useSession();
   const chat = useChat();
   const voice = useVoiceStream(chat.clientId);
+  const expectedAudioEntryId = useRef<string | null>(null);
+
+  const sendUtterance = useCallback(
+    async (text: string, options: { closing: boolean }) => {
+      expectedAudioEntryId.current = null;
+      const result = await chat.sendText(text, {
+        speak: speakReplies,
+        closing: options.closing,
+        onReplyEntry: (entryId) => {
+          expectedAudioEntryId.current = entryId;
+        },
+      });
+      return {
+        ok: result.error === null,
+        hasAudio: speakReplies && Boolean(result.reply?.audio),
+      };
+    },
+    [chat.sendText, speakReplies],
+  );
+
+  const conversation = useVoiceConversation({
+    voice,
+    sendUtterance,
+    reportError: chat.reportError,
+    warmup: () => {
+      void warmupChat();
+    },
+  });
+  const handleReplyAudioEnd = useCallback(
+    (entryId: string) => {
+      if (expectedAudioEntryId.current !== entryId) return;
+      conversation.notifyPlaybackFinished();
+    },
+    [conversation.notifyPlaybackFinished],
+  );
   const messagesRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -43,11 +81,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (session.status === "ready") void warmupChat();
+  }, [session.status]);
+
+  useEffect(() => {
     const element = messagesRef.current;
     if (element) element.scrollTop = element.scrollHeight;
-  }, [chat.entries, voice.partial, chat.pending]);
+  }, [chat.entries, voice.partial, chat.pending, conversation.phase]);
 
   const toggleRecording = async () => {
+    if (voice.streaming) {
+      await conversation.toggle();
+      return;
+    }
     if (!voice.recording) {
       await voice.start();
       return;
@@ -63,7 +109,11 @@ export default function App() {
     }
   };
 
-  const status = voice.busy ? "Распознаю…" : chat.status;
+  const status = voice.busy
+    ? "Распознаю…"
+    : conversation.active
+      ? conversation.status
+      : chat.status || conversation.hint;
   const composerDisabled = chat.pending || voice.busy;
 
   return (
@@ -88,7 +138,11 @@ export default function App() {
               const next = !speakReplies;
               setSpeakReplies(next);
               writeSpeakReplies(next);
-              if (!next) document.querySelectorAll("audio").forEach((node) => node.pause());
+              if (!next) {
+                document.querySelectorAll("audio").forEach((node) => node.pause());
+                expectedAudioEntryId.current = null;
+                conversation.notifyPlaybackFinished();
+              }
             }}
             className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition ${
               speakReplies
@@ -104,7 +158,7 @@ export default function App() {
         <LinkPanel />
         <QuickActions
           actions={quickActions}
-          disabled={composerDisabled || voice.recording}
+          disabled={composerDisabled || voice.recording || conversation.active}
           onSelect={(action) => void chat.sendText(action, { speak: speakReplies })}
         />
       </header>
@@ -124,6 +178,7 @@ export default function App() {
             timezone={timezone}
             autoPlayAudio={speakReplies}
             onComplete={chat.complete}
+            onReplyAudioEnd={handleReplyAudioEnd}
           />
         ))}
         {voice.error ? (
@@ -139,6 +194,8 @@ export default function App() {
           disabled={composerDisabled}
           recording={voice.recording}
           busy={voice.busy}
+          conversationActive={conversation.active}
+          conversationPhase={conversation.phase}
           onSend={(text) => void chat.sendText(text, { speak: speakReplies })}
           onToggleRecording={() => void toggleRecording()}
         />

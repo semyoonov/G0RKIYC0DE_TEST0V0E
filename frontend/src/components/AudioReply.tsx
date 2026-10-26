@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { decodeAudio } from "../lib/audio";
 import { Button } from "./ui/button";
@@ -7,22 +7,83 @@ interface AudioReplyProps {
   data: string;
   mime: string | null;
   autoPlay?: boolean;
+  /** Fires once when playback finishes, fails, or cannot start. */
+  onComplete?: () => void;
 }
 
-export function AudioReply({ data, mime, autoPlay = true }: AudioReplyProps) {
+export function AudioReply({ data, mime, autoPlay = true, onComplete }: AudioReplyProps) {
   const url = useMemo(() => decodeAudio(data, mime), [data, mime]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const settledRef = useRef(false);
+  const autoPlayAttempted = useRef(false);
+  const fallbackTimer = useRef<number | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  const clearFallback = useCallback(() => {
+    if (fallbackTimer.current !== null) {
+      window.clearTimeout(fallbackTimer.current);
+      fallbackTimer.current = null;
+    }
+  }, []);
+
+  const settle = useCallback(() => {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    clearFallback();
+    onCompleteRef.current?.();
+  }, [clearFallback]);
+
+  const requestPlayback = useCallback(
+    (audio: HTMLAudioElement) => {
+      try {
+        const started = audio.play();
+        // Older engines and jsdom can return undefined instead of a promise.
+        if (started && typeof started.catch === "function") {
+          void started.catch(() => settle());
+        }
+      } catch {
+        settle();
+      }
+    },
+    [settle],
+  );
 
   useEffect(() => {
+    settledRef.current = false;
+    autoPlayAttempted.current = false;
     return () => {
       if (url) URL.revokeObjectURL(url);
+      clearFallback();
     };
-  }, [url]);
+  }, [url, clearFallback]);
 
   useEffect(() => {
+    if (!url) settle();
+  }, [url, settle]);
+
+  useEffect(() => {
+    if (!url || autoPlayAttempted.current) return;
+    autoPlayAttempted.current = true;
     if (!autoPlay) return;
-    void audioRef.current?.play().catch(() => {});
-  }, [url, autoPlay]);
+    const audio = audioRef.current;
+    if (!audio) return;
+    requestPlayback(audio);
+  }, [url, autoPlay, requestPlayback]);
+
+  useEffect(() => {
+    // Nothing will be played, so a hands-free turn must not wait for it.
+    if (!url || autoPlay) return;
+    settle();
+  }, [url, autoPlay, settle]);
+
+  const startFallbackTimer = () => {
+    clearFallback();
+    const duration = audioRef.current?.duration;
+    if (duration === undefined || !Number.isFinite(duration) || duration <= 0) return;
+    // A stalled element must not freeze the conversation forever.
+    fallbackTimer.current = window.setTimeout(settle, duration * 1000 + 2000);
+  };
 
   if (!url) return null;
 
@@ -32,14 +93,25 @@ export function AudioReply({ data, mime, autoPlay = true }: AudioReplyProps) {
         variant="outline"
         size="sm"
         onClick={() => {
-          if (!audioRef.current) return;
-          audioRef.current.currentTime = 0;
-          void audioRef.current.play().catch(() => {});
+          const audio = audioRef.current;
+          if (!audio) return;
+          settledRef.current = false;
+          clearFallback();
+          audio.currentTime = 0;
+          requestPlayback(audio);
         }}
       >
         Прослушать ответ
       </Button>
-      <audio ref={audioRef} src={url} preload="auto" className="hidden" />
+      <audio
+        ref={audioRef}
+        src={url}
+        preload="auto"
+        className="hidden"
+        onEnded={settle}
+        onError={settle}
+        onPlay={startFallbackTimer}
+      />
     </div>
   );
 }

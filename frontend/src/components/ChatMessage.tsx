@@ -8,9 +8,17 @@ interface ChatMessageProps {
   timezone: string;
   autoPlayAudio?: boolean;
   onComplete: (eventId: number) => Promise<void> | void;
+  /** Called with the entry id when the reply audio finishes. */
+  onReplyAudioEnd?: (entryId: string) => void;
 }
 
-export function ChatMessage({ entry, timezone, autoPlayAudio = true, onComplete }: ChatMessageProps) {
+export function ChatMessage({
+  entry,
+  timezone,
+  autoPlayAudio = true,
+  onComplete,
+  onReplyAudioEnd,
+}: ChatMessageProps) {
   if (entry.role === "user") {
     return (
       <div className="flex justify-end">
@@ -52,7 +60,14 @@ export function ChatMessage({ entry, timezone, autoPlayAudio = true, onComplete 
           ))}
         </ul>
       ) : null}
-      {reply.audio ? <AudioReply data={reply.audio} mime={reply.audio_mime} autoPlay={autoPlayAudio} /> : null}
+      {reply.audio ? (
+        <AudioReply
+          data={reply.audio}
+          mime={reply.audio_mime}
+          autoPlay={autoPlayAudio}
+          onComplete={() => onReplyAudioEnd?.(entry.id)}
+        />
+      ) : null}
     </div>
   );
 }

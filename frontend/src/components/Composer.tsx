@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Mic } from "lucide-react";
 
+import type { ConversationPhase } from "../lib/conversation";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -8,17 +9,41 @@ interface ComposerProps {
   disabled: boolean;
   recording: boolean;
   busy: boolean;
+  conversationActive?: boolean;
+  conversationPhase?: ConversationPhase;
   onSend: (text: string) => void;
   onToggleRecording: () => void;
 }
 
-export function Composer({ disabled, recording, busy, onSend, onToggleRecording }: ComposerProps) {
+export function Composer({
+  disabled,
+  recording,
+  busy,
+  conversationActive = false,
+  conversationPhase = "idle",
+  onSend,
+  onToggleRecording,
+}: ComposerProps) {
   const [value, setValue] = useState("");
+  const active = conversationActive || recording;
+
+  const phaseTitle =
+    conversationPhase === "thinking"
+      ? "Распознаю"
+      : conversationPhase === "speaking"
+        ? "Отвечаю"
+        : "Слушаю";
+  const label = conversationActive ? "Слушаю…" : recording ? "Стоп" : "Голосом";
+  const ariaLabel = conversationActive
+    ? `${phaseTitle}. Остановить разговор и выключить микрофон`
+    : recording
+      ? "Остановить запись"
+      : "Записать голосом";
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = value.trim();
-    if (!text || disabled || recording) return;
+    if (!text || disabled || active) return;
     setValue("");
     onSend(text);
   };
@@ -35,31 +60,46 @@ export function Composer({ disabled, recording, busy, onSend, onToggleRecording 
           autoComplete="off"
           enterKeyHint="send"
           maxLength={4000}
-          disabled={disabled}
+          disabled={disabled || conversationActive}
         />
         <Button
           variant="secondary"
           className="w-full sm:w-auto"
           onClick={onToggleRecording}
           disabled={busy || disabled}
-          aria-pressed={recording}
-          aria-label={recording ? "Остановить запись" : "Записать голосом"}
+          aria-pressed={active}
+          aria-label={ariaLabel}
         >
-          {recording ? (
+          {active ? (
             <>
               <span className="size-2 animate-pulse rounded-full bg-danger" />
-              Стоп
+              {label}
             </>
           ) : (
             <>
               <Mic className="size-4" />
-              Голосом
+              {label}
             </>
           )}
         </Button>
-        <Button type="submit" className="w-full sm:w-auto" disabled={disabled || recording || !value.trim()}>
-          Отправить
-        </Button>
+        {conversationActive ? (
+          <Button
+            variant="outline"
+            className="w-full sm:w-auto"
+            onClick={onToggleRecording}
+            aria-label="Остановить разговор и выключить микрофон"
+          >
+            Стоп
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            className="w-full sm:w-auto"
+            disabled={disabled || active || !value.trim()}
+          >
+            Отправить
+          </Button>
+        )}
       </div>
     </form>
   );
