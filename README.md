@@ -11,7 +11,7 @@
 - **Архитектура:** Монолит
 - **Язык:** Python
 - **Распознавание речи (STT):** Vosk — офлайн, официальный Python-биндинг [alphacep/vosk-api](https://github.com/alphacep/vosk-api)
-- **Синтез речи (TTS):** Sber SaluteSpeech API
+- **Синтез речи (TTS):** SaluteSpeech через Cloud.ru Foundation Models (реальный голос), офлайн-резерв espeak-ng
 - **Нейросеть (LLM):** GigaChat API (с вызовом тулзов / Function Calling)
 - **База данных:** PostgreSQL
 - **ORM & Миграции:** SQLAlchemy + Alembic
@@ -74,7 +74,10 @@ unzip -q /tmp/vosk.zip -d models/
 ### 3. GigaChat и SaluteSpeech
 
 * `GIGACHAT_CREDENTIALS` — Authorization key из кабинета developers.sber.ru (scope `GIGACHAT_API_PERS`).
-* `SBER_TTS_CREDENTIALS` — ключ SaluteSpeech для синтеза речи (scope `SALUTE_SPEECH_PERS`).
+* `CLOUD_TTS_API_KEY` — ключ Cloud.ru Foundation Models: через него работает SaluteSpeech
+  (`wss://foundation-models.api.cloud.ru/v1/realtime`, модель `GigaChat/SaluteSpeech`, голос `Mer-Operator`).
+* `SBER_TTS_CREDENTIALS` — прямой gRPC-ключ SaluteSpeech (scope `SALUTE_SPEECH_PERS`), резервный путь
+  при `TTS_BACKEND=sber`; `TTS_BACKEND=local` оставляет офлайновый espeak-ng.
 * Для запросов к API Сбера нужен корневой сертификат Минцифры: установите его в систему либо
   укажите `SBER_CA_BUNDLE=/путь/к/сертификату.pem`. `GIGACHAT_VERIFY_SSL=false` — только для отладки.
 * Миграции: `alembic upgrade head` (или `AUTO_CREATE_TABLES=true` для локального запуска).
@@ -130,7 +133,8 @@ HTTP API веб-интерфейса:
 | --- | --- | --- |
 | GET | `/` | страница чата (React SPA) |
 | GET | `/api/meta` | часовой пояс и быстрые действия для интерфейса |
-| POST | `/api/chat` | текст: `{"text": "...", "client_id": "...", "speak": false}`; `speak: true` возвращает озвучку ответа |
+| POST | `/api/chat` | текст: `{"text": "...", "client_id": "...", "speak": false, "closing": false}`; `speak: true` возвращает озвучку ответа, `closing: true` — прощание вместо создания события |
+| POST | `/api/chat/warmup` | прогрев модели системным промптом до первой реплики (`{"status": "ok", "warmed": true}`) |
 | POST | `/api/voice` | аудио: multipart `audio` + `client_id` |
 | GET | `/api/events?client_id=...&period=today\|tomorrow\|week\|all` | список записей |
 | POST | `/api/events/{id}/complete?client_id=...` | отметить выполненной |
