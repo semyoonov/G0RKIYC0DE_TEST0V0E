@@ -11,10 +11,19 @@
  */
 
 /** RMS level (0..1) that counts as talking over the reply audio. */
-export const BARGE_IN_ENERGY_THRESHOLD = 0.05;
+export const BARGE_IN_ENERGY_THRESHOLD = 0.045;
 
 /** How long the input has to stay loud before playback is interrupted. */
-export const BARGE_IN_HOLD_MS = 250;
+export const BARGE_IN_HOLD_MS = 300;
+
+/** Silence drains the accumulated loud time this many times faster than it fills. */
+const QUIET_DECAY_FACTOR = 2;
+
+/** Frames arrive every ~40 ms; a longer gap is a stall, not speech. */
+const MAX_DELTA_MS = 500;
+
+/** The reply audio itself needs a moment to start; its click is not a barge-in. */
+export const BARGE_IN_STARTUP_GUARD_MS = 300;
 
 export interface BargeInOptions {
   threshold?: number;
@@ -25,7 +34,8 @@ export class BargeInDetector {
   readonly threshold: number;
   readonly holdMs: number;
 
-  private since: number | null = null;
+  private loudMs = 0;
+  private lastAt: number | null = null;
   private fired = false;
 
   constructor(options: BargeInOptions = {}) {
@@ -39,27 +49,28 @@ export class BargeInDetector {
   }
 
   reset(): void {
-    this.since = null;
+    this.loudMs = 0;
+    this.lastAt = null;
     this.fired = false;
   }
 
   /**
-   * Feeds one frame. Returns true exactly once per sustained burst: a quiet
-   * frame ends the burst, so an isolated loud click never triggers barge-in.
+   * Feeds one frame. Speech energy rises and falls, so loud time accumulates and
+   * silence drains it twice as fast instead of resetting the burst: a click or a
+   * gap between words never cancels the interruption, a cough never triggers it.
    */
   noteEnergy(energy: number, now: number): boolean {
     if (this.fired) return false;
-    if (!Number.isFinite(energy) || !Number.isFinite(now) || energy < this.threshold) {
-      this.since = null;
+    if (!Number.isFinite(energy) || !Number.isFinite(now)) {
+      this.reset();
       return false;
     }
-    if (this.since === null || now < this.since) {
-      this.since = now;
-      return false;
-    }
-    if (now - this.since < this.holdMs) return false;
+    const delta = this.lastAt === null ? 0 : Math.max(0, Math.min(MAX_DELTA_MS, now - this.lastAt));
+    this.lastAt = now;
+    if (energy >= this.threshold) this.loudMs += delta;
+    else this.loudMs = Math.max(0, this.loudMs - delta * QUIET_DECAY_FACTOR);
+    if (this.loudMs < this.holdMs) return false;
     this.fired = true;
-    this.since = null;
     return true;
   }
 }

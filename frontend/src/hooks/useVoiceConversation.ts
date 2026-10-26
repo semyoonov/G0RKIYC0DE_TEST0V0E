@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { reportTelemetry } from "../lib/api";
-import { BargeInDetector } from "../lib/bargein";
+import { BARGE_IN_STARTUP_GUARD_MS, BargeInDetector } from "../lib/bargein";
 import {
   ConversationLoop,
   type ConversationPhase,
@@ -191,8 +191,10 @@ export function useVoiceConversation(
     const detector = bargeInRef.current;
     if (!detector) return;
     detector.reset();
+    const startedAt = Date.now();
     const unsubscribe = subscribeEnergy((energy) => {
       if (!activeRef.current || phaseRef.current !== "speaking") return;
+      if (Date.now() - startedAt < BARGE_IN_STARTUP_GUARD_MS) return;
       // Sustained input above the barge-in threshold means the user is talking
       // over the answer: stop the audio and keep listening in the same turn.
       if (!detector.noteEnergy(energy, Date.now())) return;

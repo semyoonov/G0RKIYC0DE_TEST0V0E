@@ -77,19 +77,34 @@ describe("BargeInDetector", () => {
     expect(detector.triggered).toBe(true);
   });
 
-  it("restarts the window after a quiet frame", () => {
+  it("survives a dip between words", () => {
+    const clock = fakeClock();
+    const detector = new BargeInDetector();
+
+    // Loud input, then a short quiet gap that would reset a strict window.
+    detector.noteEnergy(0.08, clock.now);
+    clock.advance(200);
+    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
+    clock.advance(40);
+    expect(detector.noteEnergy(0.001, clock.now)).toBe(false);
+    clock.advance(40);
+    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
+    clock.advance(200);
+    expect(detector.noteEnergy(0.08, clock.now)).toBe(true);
+  });
+
+  it("drains the accumulated loud time during silence", () => {
     const clock = fakeClock();
     const detector = new BargeInDetector();
 
     detector.noteEnergy(0.08, clock.now);
-    clock.advance(240);
-    expect(detector.noteEnergy(0.001, clock.now)).toBe(false);
-    clock.advance(40);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    clock.advance(240);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(false);
-    clock.advance(10);
-    expect(detector.noteEnergy(0.08, clock.now)).toBe(true);
+    clock.advance(200);
+    detector.noteEnergy(0.08, clock.now);
+    for (let index = 0; index < 20; index += 1) {
+      clock.advance(100);
+      expect(detector.noteEnergy(0.001, clock.now)).toBe(false);
+    }
+    expect(detector.triggered).toBe(false);
   });
 
   it("ignores non-finite values and re-arms after reset", () => {

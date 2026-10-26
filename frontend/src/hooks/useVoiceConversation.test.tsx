@@ -225,10 +225,12 @@ describe("useVoiceConversation muted turn and barge-in", () => {
     expect(result.current.phase).toBe("speaking");
 
     act(() => {
+      // The reply audio needs a moment to start before barge-in is armed.
+      vi.advanceTimersByTime(320);
       fake.emit(0.12);
       vi.advanceTimersByTime(120);
       fake.emit(0.12);
-      vi.advanceTimersByTime(140);
+      vi.advanceTimersByTime(200);
       fake.emit(0.12);
     });
     await act(async () => {});
