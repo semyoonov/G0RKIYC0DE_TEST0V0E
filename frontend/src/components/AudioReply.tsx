@@ -111,6 +111,8 @@ export function AudioReply({ data, mime, autoPlay = true, onComplete }: AudioRep
         onEnded={settle}
         onError={settle}
         onPlay={startFallbackTimer}
+        // A barge-in pause must not leave the safety timer armed.
+        onPause={clearFallback}
       />
     </div>
   );

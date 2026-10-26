@@ -1,8 +1,22 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AssistantEvent, ChatReply } from "../types";
 import { ChatMessage } from "./ChatMessage";
+
+beforeEach(() => {
+  // jsdom has no object URLs; the audio element only needs a stable source.
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    writable: true,
+    value: vi.fn(() => "blob:reply"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    writable: true,
+    value: vi.fn(),
+  });
+});
 
 function makeEvent(id: number, title: string): AssistantEvent {
   return {
@@ -67,5 +81,35 @@ describe("ChatMessage", () => {
 
     rerender(<ChatMessage entry={{ id: "m4", role: "error", text: "Не получилось" }} timezone="Europe/Moscow" onComplete={() => {}} />);
     expect(screen.getByText("Не получилось")).toBeInTheDocument();
+  });
+
+  it("renders reply audio that appears after the entry was created", () => {
+    const entry = { id: "m5", role: "assistant" as const, reply: makeReply() };
+    const onReplyAudioEnd = vi.fn();
+    const { rerender } = render(
+      <ChatMessage
+        entry={entry}
+        timezone="Europe/Moscow"
+        autoPlayAudio={false}
+        onComplete={() => {}}
+        onReplyAudioEnd={onReplyAudioEnd}
+      />,
+    );
+
+    expect(screen.queryByText("Прослушать ответ")).not.toBeInTheDocument();
+    expect(onReplyAudioEnd).not.toHaveBeenCalled();
+
+    rerender(
+      <ChatMessage
+        entry={{ ...entry, audio: { data: "QUJD", mime: "audio/ogg" } }}
+        timezone="Europe/Moscow"
+        autoPlayAudio={false}
+        onComplete={() => {}}
+        onReplyAudioEnd={onReplyAudioEnd}
+      />,
+    );
+
+    expect(screen.getByText("Прослушать ответ")).toBeInTheDocument();
+    expect(onReplyAudioEnd).toHaveBeenCalledWith("m5");
   });
 });

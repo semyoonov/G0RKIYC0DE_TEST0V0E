@@ -11,12 +11,17 @@ export type VoiceTurnOutcome =
 export interface VoiceTurnPort {
   /** Acquires the microphone once for the whole conversation. */
   open(): Promise<boolean>;
-  /** Starts a streaming turn on the already open microphone. */
-  beginTurn(): Promise<boolean>;
+  /**
+   * Starts a streaming turn on the already open microphone. A muted turn keeps
+   * capturing frames locally but does not send them to the recognizer.
+   */
+  beginTurn(options?: { muted?: boolean }): Promise<boolean>;
   /** Stops the turn and resolves with its final transcript. */
   commitTurn(): Promise<VoiceTurnOutcome>;
   /** Releases the microphone when the mode ends. */
   release(): void;
+  /** Resumes forwarding frames on the turn that is already open. */
+  unmute(): void;
 }
 
 export interface ConversationSendResult {
@@ -40,7 +45,9 @@ export interface ConversationLoopOptions {
   onActiveChange?: (active: boolean) => void;
   onError?: (message: string) => void;
   onFarewell?: () => void;
-  /** Quiet pause after playback before listening resumes. */
+  /** Best-effort diagnostics; receives the loop's phase at the time of the event. */
+  onTelemetry?: (event: string, phase: ConversationPhase, detail: string) => void;
+  /** Quiet pause before a fallback listening turn is reopened. */
   guardMs?: number;
   /** Safety net when a playback callback never arrives. */
   playbackTimeoutMs?: number;
@@ -73,16 +80,20 @@ function defaultDelay(milliseconds: number): Promise<void> {
   });
 }
 
-type TurnState = "idle" | "opening" | "listening" | "committing" | "sending";
+type TurnState = "idle" | "opening" | "listening" | "committing" | "sending" | "muted";
 
 /**
- * Sequential hands-free dialogue:
+ * Hands-free dialogue that keeps one microphone and one streaming turn alive:
  *
- * listen -> commit -> send -> play -> guard -> listen again
+ * listen -> commit -> send -> think (next turn opens muted) -> speak (muted,
+ * barge-in armed) -> unmute -> listen again in the same turn
  *
- * A short farewell is sent with `closing: true` and the loop ends after the
- * reply audio finishes. An empty turn starts listening again instead of
- * surfacing an error. The loop owns no React state; the hook wraps it.
+ * The turn that is opened in muted mode while the answer is generated becomes
+ * the next listening turn: after playback it is merely unmuted, so neither the
+ * microphone nor the websocket is reopened. A short farewell is sent with
+ * `closing: true` and the loop ends after its reply. An empty turn starts
+ * listening again instead of surfacing an error, and a failed request keeps
+ * the microphone and resumes listening. The loop owns no React state.
  */
 export class ConversationLoop {
   private readonly options: ConversationLoopOptions;
@@ -160,7 +171,7 @@ export class ConversationLoop {
     this.setPhase("idle");
   }
 
-  /** Called by the audio element when the current reply has finished. */
+  /** Called when the current reply audio ends, fails, or is interrupted. */
   notifyPlaybackFinished(): void {
     this.gate?.settle();
   }
@@ -192,6 +203,28 @@ export class ConversationLoop {
     this.turn = "listening";
   }
 
+  /**
+   * Opens the next streaming turn while the answer is on its way. It is muted
+   * from the first frame, so no partials and no auto-commit happen before the
+   * reply audio is over (or interrupted by the user).
+   */
+  private async openMutedTurn(generation: number): Promise<boolean> {
+    if (generation !== this.generation || !this.active || this.stopRequested) return false;
+    let started = false;
+    try {
+      started = await this.options.voice.beginTurn({ muted: true });
+    } catch {
+      started = false;
+    }
+    if (generation !== this.generation) return false;
+    if (!started) return false;
+    if (!this.active || this.stopRequested) {
+      this.options.voice.release();
+      return false;
+    }
+    return true;
+  }
+
   private async commitTurn(generation: number, manual: boolean): Promise<void> {
     if (generation !== this.generation) return;
     if (this.turn === "committing" || this.turn === "sending") return;
@@ -221,6 +254,7 @@ export class ConversationLoop {
 
     if (outcome.kind === "error") {
       if (!manual && this.active && spoke) {
+        this.report("recognition_failed", outcome.message);
         this.options.onError?.(outcome.message);
       }
       this.finish(generation, "idle");
@@ -232,9 +266,19 @@ export class ConversationLoop {
     this.gate = gate;
     this.turn = "sending";
 
+    // Both start in the same tick: the request goes out and the microphone opens
+    // the next streaming turn in muted mode while the answer is being produced.
+    let sendPromise: Promise<ConversationSendResult>;
+    try {
+      sendPromise = this.options.sendUtterance(outcome.text, { closing });
+    } catch {
+      sendPromise = Promise.resolve({ ok: false, hasAudio: false });
+    }
+    const mutedTurn = closing ? null : this.openMutedTurn(generation);
+
     let result: ConversationSendResult;
     try {
-      result = await this.options.sendUtterance(outcome.text, { closing });
+      result = await sendPromise;
     } catch {
       result = { ok: false, hasAudio: false };
     }
@@ -243,17 +287,30 @@ export class ConversationLoop {
       return;
     }
 
-    if (!result.ok) {
-      // A failed request must not end the dialogue: the user keeps the microphone
-      // and can simply say the phrase again.
+    const mutedReady = mutedTurn ? await mutedTurn : false;
+    if (generation !== this.generation) {
+      gate.settle();
+      return;
+    }
+
+    if (!this.active || this.stopRequested) {
       gate.settle();
       this.gate = null;
-      if (!this.active || this.stopRequested) {
-        this.finish(generation, "idle");
-        return;
-      }
+      this.finish(generation, closing ? "ended" : "idle");
+      return;
+    }
+
+    if (!result.ok) {
+      this.report("send_failed", "chat request failed");
+      gate.settle();
+      this.gate = null;
       if (closing) {
         this.finish(generation, "ended");
+        return;
+      }
+      if (mutedReady) {
+        // The mic never closed: carry on in the turn that is already streaming.
+        this.resumeListening(generation);
         return;
       }
       this.turn = "idle";
@@ -263,16 +320,16 @@ export class ConversationLoop {
       return;
     }
 
+    this.turn = mutedReady ? "muted" : "idle";
+
     if (result.hasAudio) {
       this.setPhase("speaking");
       await this.waitForPlayback(gate);
       if (generation !== this.generation) return;
-    } else {
-      gate.settle();
     }
 
+    gate.settle();
     this.gate = null;
-    this.turn = "idle";
 
     if (!this.active || this.stopRequested) {
       this.finish(generation, closing ? "ended" : "idle");
@@ -282,10 +339,24 @@ export class ConversationLoop {
       this.finish(generation, "ended");
       return;
     }
+    if (mutedReady) {
+      // No reopen: the muted turn simply starts forwarding frames again.
+      this.resumeListening(generation);
+      return;
+    }
 
+    // The muted turn could not be opened; reopen a fresh listening turn instead.
+    this.turn = "idle";
     await this.sleep(this.guardMs);
     if (generation !== this.generation || !this.active || this.stopRequested) return;
     await this.listen(generation);
+  }
+
+  private resumeListening(generation: number): void {
+    if (generation !== this.generation || !this.active || this.stopRequested) return;
+    this.options.voice.unmute();
+    this.turn = "listening";
+    this.setPhase("listening");
   }
 
   private finish(generation: number, phase: ConversationPhase): void {
@@ -307,7 +378,7 @@ export class ConversationLoop {
   }
 
   private waitForPlayback(gate: PlaybackGate): Promise<void> {
-    const timeoutMs = this.options.playbackTimeoutMs ?? 20_000;
+    const timeoutMs = this.options.playbackTimeoutMs ?? 120_000;
     return new Promise((resolve) => {
       const timer = globalThis.setTimeout(resolve, timeoutMs);
       void gate.promise.then(() => {
@@ -317,9 +388,18 @@ export class ConversationLoop {
     });
   }
 
+  private report(event: string, detail = ""): void {
+    try {
+      this.options.onTelemetry?.(event, this.phase, detail);
+    } catch {
+      // Diagnostics must never break the dialogue.
+    }
+  }
+
   private setPhase(phase: ConversationPhase): void {
     if (this.phase === phase) return;
     this.phase = phase;
+    this.report("phase");
     this.options.onPhase?.(phase);
   }
 

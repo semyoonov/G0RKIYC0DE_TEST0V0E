@@ -68,7 +68,19 @@ export interface Meta {
   voice?: string;
 }
 
+/** Speech synthesised separately and attached to an already rendered reply. */
+export interface ChatAudio {
+  data: string;
+  mime: string | null;
+}
+
 export type ChatEntry =
   | { id: string; role: "user"; text: string }
-  | { id: string; role: "assistant"; reply: ChatReply }
+  | {
+      id: string;
+      role: "assistant";
+      reply: ChatReply;
+      /** Filled in later by `attachAudio`; absent until the speech arrives. */
+      audio?: ChatAudio | null;
+    }
   | { id: string; role: "error"; text: string };

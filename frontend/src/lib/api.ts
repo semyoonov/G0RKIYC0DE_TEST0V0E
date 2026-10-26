@@ -6,6 +6,7 @@ import type {
   Meta,
   SessionPlatform,
 } from "../types";
+import type { ConversationPhase } from "./conversation";
 
 const CLIENT_STORAGE_KEY = "assistant_client_id";
 export const SESSION_TOKEN_STORAGE_KEY = "assistant_session_token";
@@ -162,12 +163,19 @@ export async function linkIdentity(code: string): Promise<AuthSession> {
   });
 }
 
+export interface ChatRequestOptions {
+  closing?: boolean;
+  voice?: string;
+}
+
+/**
+ * Text answers arrive without speech (`speak: false`), so the reply can render
+ * while the voice is synthesised in a separate, abortable request.
+ */
 export async function postChat(
   text: string,
   clientId: string,
-  speak = false,
-  closing = false,
-  voice = "",
+  options: ChatRequestOptions = {},
 ): Promise<ChatReply> {
   const payload: {
     text: string;
@@ -178,15 +186,66 @@ export async function postChat(
   } = {
     text,
     client_id: clientId,
-    speak,
+    speak: false,
   };
-  if (closing) payload.closing = true;
-  if (voice) payload.voice = voice;
+  if (options.closing) payload.closing = true;
+  if (options.voice) payload.voice = options.voice;
   return requestWithSession<ChatReply>("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+export const SPEECH_TEXT_LIMIT = 4000;
+
+export interface SpeechResult {
+  audio: string | null;
+  audio_mime: string | null;
+  audio_format?: string | null;
+}
+
+/** Synthesises speech for an already rendered reply; abortable by the caller. */
+export async function postSpeech(
+  text: string,
+  voice = "",
+  signal?: AbortSignal,
+): Promise<SpeechResult> {
+  const payload: { text: string; voice?: string } = { text: text.slice(0, SPEECH_TEXT_LIMIT) };
+  if (voice) payload.voice = voice;
+  return requestWithSession<SpeechResult>("/api/speech", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
+
+const TELEMETRY_DETAIL_LIMIT = 180;
+
+/**
+ * Fire-and-forget diagnostics for the hands-free loop. It never returns a
+ * promise the caller could await and never throws: telemetry is best effort.
+ */
+export function reportTelemetry(
+  event: string,
+  phase: ConversationPhase | string,
+  detail = "",
+): void {
+  try {
+    const body = JSON.stringify({
+      event,
+      phase,
+      detail: String(detail).slice(0, TELEMETRY_DETAIL_LIMIT),
+    });
+    void fetch("/api/telemetry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }).catch(() => {});
+  } catch {
+    // A failed telemetry post must never reach the user.
+  }
 }
 
 /**

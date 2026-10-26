@@ -42,6 +42,10 @@ export function ChatMessage({
   const { reply } = entry;
   const action = reply.intent ? ACTION_LABELS[reply.intent] : undefined;
   const showCards = reply.events.length > 0 && reply.intent !== "delete_event";
+  // Speech can arrive after the text (separate /api/speech request) or inline
+  // with an older reply payload; both are rendered the same way.
+  const audio =
+    entry.audio ?? (reply.audio ? { data: reply.audio, mime: reply.audio_mime } : null);
 
   return (
     <div className="flex flex-col gap-2">
@@ -60,10 +64,10 @@ export function ChatMessage({
           ))}
         </ul>
       ) : null}
-      {reply.audio ? (
+      {audio ? (
         <AudioReply
-          data={reply.audio}
-          mime={reply.audio_mime}
+          data={audio.data}
+          mime={audio.mime}
           autoPlay={autoPlayAudio}
           onComplete={() => onReplyAudioEnd?.(entry.id)}
         />

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { reportTelemetry } from "../lib/api";
+import { BargeInDetector } from "../lib/bargein";
 import {
   ConversationLoop,
   type ConversationPhase,
@@ -19,12 +21,22 @@ const PHASE_STATUS: Record<ConversationPhase, string> = {
   ended: "",
 };
 
+export type TelemetrySink = (
+  event: string,
+  phase: ConversationPhase,
+  detail?: string,
+) => void;
+
 export interface VoiceConversationOptions {
   voice: VoiceController;
   sendUtterance: ConversationSend;
   reportError: (message: string) => void;
   /** Best-effort model warmup; called every time the mode is entered. */
   warmup?: () => void;
+  /** Interrupts the reply audio when the user starts talking over it. */
+  pausePlayback?: () => void;
+  /** Diagnostics sink; defaults to the real /api/telemetry reporter. */
+  telemetry?: TelemetrySink;
 }
 
 export interface VoiceConversationController {
@@ -39,10 +51,22 @@ export interface VoiceConversationController {
   notifyPlaybackFinished: () => void;
 }
 
+function pauseAllPlayback(): void {
+  if (typeof document === "undefined") return;
+  document.querySelectorAll("audio").forEach((node) => {
+    try {
+      node.pause();
+    } catch {
+      // The element was already stopped.
+    }
+  });
+}
+
 /**
  * Drives a hands-free conversation: the microphone is opened once, VAD decides
- * when a turn is committed, and the next listening turn starts only after the
- * reply audio has finished.
+ * when a turn is committed, and the next streaming turn is opened muted while
+ * the answer is generated. It is unmuted after playback — or immediately when
+ * the user talks over the reply (barge-in).
  */
 export function useVoiceConversation(
   options: VoiceConversationOptions,
@@ -61,6 +85,10 @@ export function useVoiceConversation(
       silenceMs: VAD_SILENCE_MS,
     });
   }
+  const bargeInRef = useRef<BargeInDetector | null>(null);
+  if (bargeInRef.current === null) {
+    bargeInRef.current = new BargeInDetector();
+  }
 
   const voiceRef = useRef(options.voice);
   voiceRef.current = options.voice;
@@ -70,7 +98,12 @@ export function useVoiceConversation(
   reportErrorRef.current = options.reportError;
   const warmupRef = useRef(options.warmup);
   warmupRef.current = options.warmup;
+  const pausePlaybackRef = useRef(options.pausePlayback ?? pauseAllPlayback);
+  pausePlaybackRef.current = options.pausePlayback ?? pauseAllPlayback;
+  const telemetryRef = useRef<TelemetrySink>(options.telemetry ?? reportTelemetry);
+  telemetryRef.current = options.telemetry ?? reportTelemetry;
   const loopRef = useRef<ConversationLoop | null>(null);
+  const reportedVoiceErrorRef = useRef<string | null>(null);
 
   const clearCommitTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -114,9 +147,10 @@ export function useVoiceConversation(
     loopRef.current = new ConversationLoop({
       voice: {
         open: () => voiceRef.current.openMicrophone(),
-        beginTurn: () => voiceRef.current.beginTurn(),
+        beginTurn: (turnOptions) => voiceRef.current.beginTurn(turnOptions),
         commitTurn: () => voiceRef.current.commitTurn(),
         release: () => voiceRef.current.releaseMicrophone(),
+        unmute: () => voiceRef.current.unmute(),
       },
       sendUtterance: (text, sendOptions) => sendRef.current(text, sendOptions),
       hasSpeech: () => detectorRef.current?.spoke ?? false,
@@ -131,6 +165,8 @@ export function useVoiceConversation(
       },
       onError: (message) => reportErrorRef.current(message),
       onFarewell: () => setHint(FAREWELL_HINT),
+      onTelemetry: (event, currentPhase, detail) =>
+        telemetryRef.current(event, currentPhase, detail),
     });
   }
 
@@ -149,6 +185,24 @@ export function useVoiceConversation(
       clearCommitTimer();
     };
   }, [active, phase, subscribeEnergy, armCommitTimer, clearCommitTimer]);
+
+  useEffect(() => {
+    if (!active || phase !== "speaking") return;
+    const detector = bargeInRef.current;
+    if (!detector) return;
+    detector.reset();
+    const unsubscribe = subscribeEnergy((energy) => {
+      if (!activeRef.current || phaseRef.current !== "speaking") return;
+      // Sustained input above the barge-in threshold means the user is talking
+      // over the answer: stop the audio and keep listening in the same turn.
+      if (!detector.noteEnergy(energy, Date.now())) return;
+      pausePlaybackRef.current();
+      voiceRef.current.unmute();
+      telemetryRef.current("barge_in", "speaking", "speech over reply audio");
+      loopRef.current?.notifyPlaybackFinished();
+    });
+    return unsubscribe;
+  }, [active, phase, subscribeEnergy]);
 
   const partial = options.voice.partial;
   const lastPartialRef = useRef("");
@@ -211,10 +265,18 @@ export function useVoiceConversation(
   }, []);
 
   // A denied microphone or a broken voice stream must never leave the UI
-  // stuck in conversation mode.
+  // stuck in conversation mode; the same effect reports the failure once.
   useEffect(() => {
-    if (!active || !options.voice.error) return;
-    void stop();
+    const message = options.voice.error;
+    if (!message) {
+      reportedVoiceErrorRef.current = null;
+      return;
+    }
+    if (message !== reportedVoiceErrorRef.current) {
+      reportedVoiceErrorRef.current = message;
+      telemetryRef.current("stream_failed", phaseRef.current, message);
+    }
+    if (active) void stop();
   }, [active, options.voice.error, stop]);
 
   useEffect(() => {

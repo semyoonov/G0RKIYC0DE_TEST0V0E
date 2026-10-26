@@ -35,11 +35,18 @@ interface StreamState {
   rejectReady: (error: Error) => void;
   ready: Promise<void>;
   intentional: boolean;
+  /** A muted turn keeps capturing energy but sends no frames to the server. */
+  muted: boolean;
 }
 
 interface MediaState {
   recorder: MediaRecorder;
   chunks: Blob[];
+}
+
+export interface BeginTurnOptions {
+  /** Capture frames but do not forward them until `unmute()` is called. */
+  muted?: boolean;
 }
 
 export interface VoiceController {
@@ -55,11 +62,36 @@ export interface VoiceController {
   clearError: () => void;
   /** Conversation-mode primitives: one microphone, one streaming turn at a time. */
   openMicrophone: () => Promise<boolean>;
-  beginTurn: () => Promise<boolean>;
+  beginTurn: (options?: BeginTurnOptions) => Promise<boolean>;
   commitTurn: () => Promise<VoiceTurnOutcome>;
   releaseMicrophone: () => void;
+  /** Stops forwarding frames on the current turn without closing anything. */
+  mute: () => void;
+  /** Resumes forwarding frames on the current turn. */
+  unmute: () => void;
   subscribeEnergy: (handler: (energy: number) => void) => () => void;
 }
+
+/** Echo cancellation keeps the assistant's own voice out of the barge-in check. */
+const PREFERRED_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+
+const FALLBACK_AUDIO_CONSTRAINTS: MediaStreamConstraints = { audio: true };
+
+async function requestMicrophone(): Promise<MediaStream> {
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: PREFERRED_AUDIO_CONSTRAINTS,
+    });
+  } catch {
+    // Constraints are not supported everywhere; a plain audio stream still works.
+    return navigator.mediaDevices.getUserMedia(FALLBACK_AUDIO_CONSTRAINTS);
+  }
+}
+
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   return Promise.race([
@@ -161,7 +193,7 @@ export function useVoiceStream(clientId: string): VoiceController {
       return false;
     }
     try {
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mic = await requestMicrophone();
       if (!mounted.current) {
         mic.getTracks().forEach((track) => track.stop());
         return false;
@@ -184,7 +216,7 @@ export function useVoiceStream(clientId: string): VoiceController {
     return pending;
   }, [acquireMicrophone]);
 
-  const startStream = useCallback(async (): Promise<boolean> => {
+  const startStream = useCallback(async (muted: boolean): Promise<boolean> => {
     const mic = micRef.current;
     if (!mic) return false;
 
@@ -199,6 +231,7 @@ export function useVoiceStream(clientId: string): VoiceController {
       rejectReady: () => {},
       ready: Promise.resolve(),
       intentional: false,
+      muted,
     };
 
     try {
@@ -284,6 +317,9 @@ export function useVoiceStream(clientId: string): VoiceController {
       stream.node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
         const energy = pcm16Energy(event.data);
         energyHandlers.current.forEach((handler) => handler(energy));
+        // A muted turn still measures energy (barge-in) but stays silent
+        // towards the recognizer: no partials, no auto-commit.
+        if (stream.muted) return;
         if (socket.readyState !== WebSocket.OPEN) return;
         socket.send(event.data);
       };
@@ -324,7 +360,7 @@ export function useVoiceStream(clientId: string): VoiceController {
       setError(null);
       setPartial("");
       if (!(await openMicrophone())) return;
-      if (canStream() && (await startStream())) {
+      if (canStream() && (await startStream(false))) {
         setRecording(true);
         return;
       }
@@ -436,28 +472,44 @@ export function useVoiceStream(clientId: string): VoiceController {
     return null;
   }, [commitTurn, stopMedia, stopMicrophone]);
 
-  const beginTurn = useCallback(async (): Promise<boolean> => {
-    if (!micRef.current) return false;
-    if (!canStream()) {
-      setError(MIC_UNAVAILABLE_TEXT);
-      return false;
-    }
-    if (streamRef.current) return true;
-    setError(null);
-    setPartial("");
-    const started = await startStream();
-    if (!started) {
-      // A manual release stops the microphone; do not surface that as an error.
-      if (mounted.current && micRef.current) setError((current) => current ?? STREAM_START_TEXT);
-      return false;
-    }
-    if (!mounted.current || !streamRef.current) {
-      cleanupStream();
-      return false;
-    }
-    setRecording(true);
-    return true;
-  }, [cleanupStream, startStream]);
+  const mute = useCallback(() => {
+    if (streamRef.current) streamRef.current.muted = true;
+  }, []);
+
+  const unmute = useCallback(() => {
+    if (streamRef.current) streamRef.current.muted = false;
+  }, []);
+
+  const beginTurn = useCallback(
+    async (options?: BeginTurnOptions): Promise<boolean> => {
+      if (!micRef.current) return false;
+      if (!canStream()) {
+        setError(MIC_UNAVAILABLE_TEXT);
+        return false;
+      }
+      if (streamRef.current) {
+        // The turn is already streaming: muting is only a forwarding flag.
+        if (options?.muted) mute();
+        else unmute();
+        return true;
+      }
+      setError(null);
+      setPartial("");
+      const started = await startStream(options?.muted ?? false);
+      if (!started) {
+        // A manual release stops the microphone; do not surface that as an error.
+        if (mounted.current && micRef.current) setError((current) => current ?? STREAM_START_TEXT);
+        return false;
+      }
+      if (!mounted.current || !streamRef.current) {
+        cleanupStream();
+        return false;
+      }
+      setRecording(true);
+      return true;
+    },
+    [cleanupStream, mute, startStream, unmute],
+  );
 
   const releaseMicrophone = useCallback(() => {
     openingRef.current = null;
@@ -486,6 +538,8 @@ export function useVoiceStream(clientId: string): VoiceController {
     beginTurn,
     commitTurn,
     releaseMicrophone,
+    mute,
+    unmute,
     subscribeEnergy,
   };
 }

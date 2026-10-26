@@ -4,6 +4,7 @@ import {
   ConversationLoop,
   type ConversationPhase,
   type ConversationSend,
+  type ConversationSendResult,
   type VoiceTurnOutcome,
 } from "./conversation";
 import { isFarewellUtterance } from "./farewell";
@@ -27,8 +28,8 @@ function makeHarness(options: HarnessOptions = {}) {
       calls.push("open");
       return options.open ?? true;
     }),
-    beginTurn: vi.fn(async () => {
-      calls.push("begin");
+    beginTurn: vi.fn(async (turnOptions?: { muted?: boolean }) => {
+      calls.push(turnOptions?.muted ? "begin:muted" : "begin");
       return options.begin ?? true;
     }),
     commitTurn: vi.fn(async (): Promise<VoiceTurnOutcome> => {
@@ -37,6 +38,9 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     release: vi.fn(() => {
       calls.push("release");
+    }),
+    unmute: vi.fn(() => {
+      calls.push("unmute");
     }),
   };
 
@@ -53,6 +57,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const onActiveChange = vi.fn();
   const onError = vi.fn();
   const onFarewell = vi.fn();
+  const onTelemetry = vi.fn();
   const delay = vi.fn(async (milliseconds: number) => {
     calls.push(`guard:${milliseconds}`);
   });
@@ -66,6 +71,7 @@ function makeHarness(options: HarnessOptions = {}) {
     onActiveChange,
     onError,
     onFarewell,
+    onTelemetry,
     delay,
   });
 
@@ -78,13 +84,14 @@ function makeHarness(options: HarnessOptions = {}) {
     onActiveChange,
     onError,
     onFarewell,
+    onTelemetry,
     delay,
     calls,
   };
 }
 
 describe("ConversationLoop", () => {
-  it("sequences commit, send, playback and the next listening turn", async () => {
+  it("sequences commit, send, muted listening and unmutes into the same turn", async () => {
     const harness = makeHarness();
     await harness.loop.start();
     await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1));
@@ -95,27 +102,62 @@ describe("ConversationLoop", () => {
     await vi.waitFor(() => expect(harness.sendUtterance).toHaveBeenCalledTimes(1));
     expect(harness.sendUtterance).toHaveBeenCalledWith("поставь задачу", { closing: false });
     await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("speaking"));
-    expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1);
+
+    // The next turn was opened muted while the answer was being requested.
+    expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2);
+    expect(harness.voice.beginTurn.mock.calls[1][0]).toEqual({ muted: true });
+    expect(harness.voice.unmute).not.toHaveBeenCalled();
     expect(harness.voice.release).not.toHaveBeenCalled();
 
     harness.loop.notifyPlaybackFinished();
     await committing;
+    await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("listening"));
 
-    await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2));
+    // Same turn: neither the microphone nor the websocket is reopened.
+    expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2);
+    expect(harness.voice.unmute).toHaveBeenCalledTimes(1);
+    expect(harness.delay).not.toHaveBeenCalled();
     expect(harness.calls).toEqual([
       "open",
       "begin",
       "commit",
       "send:поставь задачу:false",
-      "guard:400",
-      "begin",
+      "begin:muted",
+      "unmute",
     ]);
-    expect(harness.loop.currentPhase).toBe("listening");
     expect(harness.loop.isActive).toBe(true);
     expect(harness.onError).not.toHaveBeenCalled();
   });
 
-  it("sends a short farewell with closing and ends after the reply", async () => {
+  it("opens the next turn in muted mode while the request is still in flight", async () => {
+    let releaseSend: (result: ConversationSendResult) => void = () => {};
+    const send = vi.fn(
+      () =>
+        new Promise<ConversationSendResult>((resolve) => {
+          releaseSend = resolve;
+        }),
+    );
+    const harness = makeHarness({ send });
+    await harness.loop.start();
+    await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1));
+
+    const committing = harness.loop.commit();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2));
+
+    expect(harness.voice.beginTurn.mock.calls[1][0]).toEqual({ muted: true });
+    expect(harness.loop.currentPhase).toBe("thinking");
+    expect(harness.voice.unmute).not.toHaveBeenCalled();
+
+    releaseSend({ ok: true, hasAudio: false });
+    await committing;
+
+    expect(harness.voice.unmute).toHaveBeenCalledTimes(1);
+    expect(harness.loop.currentPhase).toBe("listening");
+    expect(harness.loop.isActive).toBe(true);
+  });
+
+  it("sends a short farewell with closing, plays it and ends without a muted turn", async () => {
     const harness = makeHarness({ outcomes: [{ kind: "text", text: "Спасибо!" }] });
     await harness.loop.start();
     await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1));
@@ -123,7 +165,11 @@ describe("ConversationLoop", () => {
 
     const committing = harness.loop.commit();
     await vi.waitFor(() => expect(harness.sendUtterance).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("speaking"));
     expect(harness.sendUtterance).toHaveBeenCalledWith("Спасибо!", { closing: true });
+    // A farewell will not listen again, so no muted turn is opened for it.
+    expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1);
+    expect(harness.voice.unmute).not.toHaveBeenCalled();
 
     harness.loop.notifyPlaybackFinished();
     await committing;
@@ -136,22 +182,27 @@ describe("ConversationLoop", () => {
     expect(harness.voice.release).toHaveBeenCalled();
   });
 
-  it("keeps listening when the request fails instead of ending the dialogue", async () => {
+  it("keeps the microphone hot when the request fails and resumes the muted turn", async () => {
     const harness = makeHarness({
       send: async () => ({ ok: false, hasAudio: false }),
     });
     await harness.loop.start();
     await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1));
 
-    const committing = harness.loop.commit();
-    await vi.waitFor(() => expect(harness.sendUtterance).toHaveBeenCalledTimes(1));
-    await committing;
-    await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2));
+    await harness.loop.commit();
+    await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("listening"));
 
+    expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2);
+    expect(harness.voice.beginTurn.mock.calls[1][0]).toEqual({ muted: true });
+    expect(harness.voice.unmute).toHaveBeenCalledTimes(1);
     expect(harness.loop.isActive).toBe(true);
-    expect(harness.loop.currentPhase).toBe("listening");
     expect(harness.voice.release).not.toHaveBeenCalled();
     expect(harness.onActiveChange).not.toHaveBeenCalledWith(false);
+    expect(harness.onTelemetry).toHaveBeenCalledWith(
+      "send_failed",
+      "thinking",
+      expect.any(String),
+    );
   });
 
   it("keeps listening after an empty turn without sending or reporting an error", async () => {
@@ -162,6 +213,7 @@ describe("ConversationLoop", () => {
     await harness.loop.commit();
     await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2));
 
+    expect(harness.voice.beginTurn.mock.calls[1][0]).toBeUndefined();
     expect(harness.sendUtterance).not.toHaveBeenCalled();
     expect(harness.onError).not.toHaveBeenCalled();
     expect(harness.voice.release).not.toHaveBeenCalled();
@@ -198,6 +250,7 @@ describe("ConversationLoop", () => {
 
     expect(harness.sendUtterance).toHaveBeenCalledWith("поставь задачу", { closing: false });
     expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1);
+    expect(harness.voice.unmute).not.toHaveBeenCalled();
     expect(harness.loop.isActive).toBe(false);
     expect(harness.loop.currentPhase).toBe("idle");
     expect(harness.voice.release).toHaveBeenCalled();
@@ -226,22 +279,64 @@ describe("ConversationLoop", () => {
     await vi.waitFor(() => expect(harness.onError).toHaveBeenCalledTimes(1));
 
     expect(harness.onError).toHaveBeenCalledWith("Не удалось распознать речь.");
+    expect(harness.onTelemetry).toHaveBeenCalledWith(
+      "recognition_failed",
+      "thinking",
+      "Не удалось распознать речь.",
+    );
     expect(harness.sendUtterance).not.toHaveBeenCalled();
     expect(harness.loop.isActive).toBe(false);
     expect(harness.loop.currentPhase).toBe("idle");
     expect(harness.voice.release).toHaveBeenCalled();
   });
 
-  it("waits for the guard delay before listening again when the reply has no audio", async () => {
+  it("unmutes immediately when the reply has no audio instead of waiting for playback", async () => {
     const harness = makeHarness({ send: async () => ({ ok: true, hasAudio: false }) });
     await harness.loop.start();
     await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1));
 
     await harness.loop.commit();
-    await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("listening"));
 
-    expect(harness.delay).toHaveBeenCalledWith(400);
+    expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2);
+    expect(harness.voice.unmute).toHaveBeenCalledTimes(1);
+    expect(harness.delay).not.toHaveBeenCalled();
     expect(harness.sendUtterance).toHaveBeenCalledTimes(1);
+  });
+
+  it("unmutes the same turn when playback is interrupted right after sending", async () => {
+    let releaseSend: (result: ConversationSendResult) => void = () => {};
+    const send = vi.fn(
+      () =>
+        new Promise<ConversationSendResult>((resolve) => {
+          releaseSend = resolve;
+        }),
+    );
+    const harness = makeHarness({ send });
+    await harness.loop.start();
+    await vi.waitFor(() => expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1));
+
+    const committing = harness.loop.commit();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    // Barge-in can settle the playback gate before the reply is even rendered.
+    harness.loop.notifyPlaybackFinished();
+    releaseSend({ ok: true, hasAudio: true });
+    await committing;
+    await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("listening"));
+
+    expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2);
+    expect(harness.voice.unmute).toHaveBeenCalledTimes(1);
+    expect(harness.loop.isActive).toBe(true);
+  });
+
+  it("reports every phase change with the current phase", async () => {
+    const harness = makeHarness({ begin: false });
+    await harness.loop.start();
+
+    expect(harness.onTelemetry).toHaveBeenCalledWith("phase", "listening", "");
+    expect(harness.onTelemetry).toHaveBeenCalledWith("phase", "idle", "");
+    expect(harness.loop.isActive).toBe(false);
+    expect(harness.voice.release).toHaveBeenCalled();
   });
 
   it("does not start twice when start is tapped twice", async () => {
@@ -263,6 +358,7 @@ describe("ConversationLoop", () => {
         async (): Promise<VoiceTurnOutcome> => ({ kind: "empty" }),
       ),
       release: vi.fn(),
+      unmute: vi.fn(),
     };
     const sendUtterance = vi.fn(async () => ({ ok: true, hasAudio: false }));
     const loop = new ConversationLoop({

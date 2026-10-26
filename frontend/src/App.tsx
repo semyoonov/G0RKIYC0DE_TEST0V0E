@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 
-import { fetchMeta, warmupChat } from "./lib/api";
+import { fetchMeta, reportTelemetry, warmupChat } from "./lib/api";
 import { ChatMessage } from "./components/ChatMessage";
 import { Composer } from "./components/Composer";
 import { LinkPanel } from "./components/LinkPanel";
@@ -11,6 +11,7 @@ import { VoiceSelect } from "./components/VoiceSelect";
 import { useChat } from "./hooks/useChat";
 import { useVoiceConversation } from "./hooks/useVoiceConversation";
 import { useVoiceStream } from "./hooks/useVoiceStream";
+import type { ConversationPhase } from "./lib/conversation";
 import { readSpeakReplies, readVoice, writeSpeakReplies, writeVoice } from "./lib/preferences";
 import { useSession } from "./lib/session";
 
@@ -33,21 +34,31 @@ export default function App() {
   const chat = useChat();
   const voice = useVoiceStream(chat.clientId);
   const expectedAudioEntryId = useRef<string | null>(null);
+  const speechAbortRef = useRef<AbortController | null>(null);
+  const conversationPhaseRef = useRef<ConversationPhase>("idle");
 
   const sendUtterance = useCallback(
     async (text: string, options: { closing: boolean }) => {
       expectedAudioEntryId.current = null;
+      // A newer turn supersedes any speech still being synthesised.
+      speechAbortRef.current?.abort();
+      const controller = new AbortController();
+      speechAbortRef.current = controller;
       const result = await chat.sendText(text, {
         speak: speakReplies,
         voice: voiceName,
         closing: options.closing,
+        signal: controller.signal,
         onReplyEntry: (entryId) => {
           expectedAudioEntryId.current = entryId;
+        },
+        onSpeechError: (message) => {
+          reportTelemetry("speech_failed", conversationPhaseRef.current, message);
         },
       });
       return {
         ok: result.error === null,
-        hasAudio: speakReplies && Boolean(result.reply?.audio),
+        hasAudio: result.hasAudio,
       };
     },
     [chat.sendText, speakReplies, voiceName],
@@ -60,7 +71,36 @@ export default function App() {
     warmup: () => {
       void warmupChat();
     },
+    telemetry: reportTelemetry,
   });
+  conversationPhaseRef.current = conversation.phase;
+
+  // Leaving the dialogue (or unmounting) cancels speech that is still loading.
+  useEffect(() => {
+    if (conversation.active) return;
+    speechAbortRef.current?.abort();
+    speechAbortRef.current = null;
+  }, [conversation.active]);
+
+  useEffect(() => {
+    return () => {
+      speechAbortRef.current?.abort();
+      speechAbortRef.current = null;
+    };
+  }, []);
+
+  const sendTyped = useCallback(
+    (text: string) => {
+      void chat.sendText(text, {
+        speak: speakReplies,
+        voice: voiceName,
+        onSpeechError: (message) => {
+          reportTelemetry("speech_failed", conversationPhaseRef.current, message);
+        },
+      });
+    },
+    [chat.sendText, speakReplies, voiceName],
+  );
   const handleReplyAudioEnd = useCallback(
     (entryId: string) => {
       if (expectedAudioEntryId.current !== entryId) return;
@@ -116,7 +156,6 @@ export default function App() {
       chat.reportError(outcome.message);
     }
   };
-
   const status = voice.busy
     ? "Распознаю…"
     : conversation.active
@@ -148,6 +187,8 @@ export default function App() {
               setSpeakReplies(next);
               writeSpeakReplies(next);
               if (!next) {
+                speechAbortRef.current?.abort();
+                speechAbortRef.current = null;
                 document.querySelectorAll("audio").forEach((node) => node.pause());
                 expectedAudioEntryId.current = null;
                 conversation.notifyPlaybackFinished();
@@ -178,7 +219,7 @@ export default function App() {
         <QuickActions
           actions={quickActions}
           disabled={composerDisabled || voice.recording || conversation.active}
-          onSelect={(action) => void chat.sendText(action, { speak: speakReplies, voice: voiceName })}
+          onSelect={sendTyped}
         />
       </header>
 
@@ -215,7 +256,7 @@ export default function App() {
           busy={voice.busy}
           conversationActive={conversation.active}
           conversationPhase={conversation.phase}
-          onSend={(text) => void chat.sendText(text, { speak: speakReplies, voice: voiceName })}
+          onSend={sendTyped}
           onToggleRecording={() => void toggleRecording()}
         />
         <p className="min-h-5 px-4 pb-2 text-xs text-ink-dim sm:px-6" role="status">
