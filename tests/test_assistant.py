@@ -45,9 +45,13 @@ class FakeSTT:
 class FakeTTS:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None]] = []
+        self.voices: list[str | None] = []
 
-    async def synthesize(self, text: str, *, audio_format: str | None = None) -> bytes:
+    async def synthesize(
+        self, text: str, *, audio_format: str | None = None, voice: str | None = None
+    ) -> bytes:
         self.calls.append((text, audio_format))
+        self.voices.append(voice)
         return b"opus-bytes"
 
 
@@ -315,3 +319,16 @@ async def test_prewarm_without_llm_is_a_no_op(session_factory, settings, cache):
     assistant = AssistantService(session_factory, settings, llm=None, cache=cache)
 
     assert await assistant.prewarm() is False
+
+
+async def test_chat_passes_the_chosen_voice_to_tts(session_factory, cloud_settings, cache):
+    llm = FakeLLM(ChatCompletion(content="Готово."))
+    tts = FakeTTS()
+    assistant = AssistantService(session_factory, cloud_settings, llm=llm, tts=tts, cache=cache)
+
+    response = await assistant.handle_text(
+        Platform.WEB, "web-voice", "Что на завтра?", speak=True, voice="Bab-Energetic"
+    )
+
+    assert response.audio == b"opus-bytes"
+    assert tts.voices == ["Bab-Energetic"]

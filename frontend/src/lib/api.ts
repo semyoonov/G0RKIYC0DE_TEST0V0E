@@ -167,13 +167,21 @@ export async function postChat(
   clientId: string,
   speak = false,
   closing = false,
+  voice = "",
 ): Promise<ChatReply> {
-  const payload: { text: string; client_id: string; speak: boolean; closing?: boolean } = {
+  const payload: {
+    text: string;
+    client_id: string;
+    speak: boolean;
+    closing?: boolean;
+    voice?: string;
+  } = {
     text,
     client_id: clientId,
     speak,
   };
   if (closing) payload.closing = true;
+  if (voice) payload.voice = voice;
   return requestWithSession<ChatReply>("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

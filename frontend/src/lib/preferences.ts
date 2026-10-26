@@ -18,3 +18,23 @@ export function writeSpeakReplies(value: boolean): void {
     // Приватный режим: настройка живёт до перезагрузки страницы.
   }
 }
+
+const VOICE_KEY = "assistant.ttsVoice";
+
+/** Выбранный голос озвучки; пустая строка означает голос сервера по умолчанию. */
+export function readVoice(): string {
+  try {
+    return window.localStorage.getItem(VOICE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function writeVoice(value: string): void {
+  try {
+    if (value) window.localStorage.setItem(VOICE_KEY, value);
+    else window.localStorage.removeItem(VOICE_KEY);
+  } catch {
+    // Приватный режим: выбор живёт до перезагрузки страницы.
+  }
+}

@@ -7,10 +7,11 @@ import { Composer } from "./components/Composer";
 import { LinkPanel } from "./components/LinkPanel";
 import { LiveTranscript } from "./components/LiveTranscript";
 import { QuickActions } from "./components/QuickActions";
+import { VoiceSelect } from "./components/VoiceSelect";
 import { useChat } from "./hooks/useChat";
 import { useVoiceConversation } from "./hooks/useVoiceConversation";
 import { useVoiceStream } from "./hooks/useVoiceStream";
-import { readSpeakReplies, writeSpeakReplies } from "./lib/preferences";
+import { readSpeakReplies, readVoice, writeSpeakReplies, writeVoice } from "./lib/preferences";
 import { useSession } from "./lib/session";
 
 const DEFAULT_QUICK_ACTIONS = ["Что у меня сегодня?", "Что на завтра?", "Что на этой неделе?"];
@@ -26,6 +27,8 @@ export default function App() {
   const [timezone, setTimezone] = useState(initialTimezone);
   const [quickActions, setQuickActions] = useState<string[]>(DEFAULT_QUICK_ACTIONS);
   const [speakReplies, setSpeakReplies] = useState(readSpeakReplies);
+  const [voices, setVoices] = useState<string[]>([]);
+  const [voiceName, setVoiceName] = useState(readVoice);
   const session = useSession();
   const chat = useChat();
   const voice = useVoiceStream(chat.clientId);
@@ -36,6 +39,7 @@ export default function App() {
       expectedAudioEntryId.current = null;
       const result = await chat.sendText(text, {
         speak: speakReplies,
+        voice: voiceName,
         closing: options.closing,
         onReplyEntry: (entryId) => {
           expectedAudioEntryId.current = entryId;
@@ -46,7 +50,7 @@ export default function App() {
         hasAudio: speakReplies && Boolean(result.reply?.audio),
       };
     },
-    [chat.sendText, speakReplies],
+    [chat.sendText, speakReplies, voiceName],
   );
 
   const conversation = useVoiceConversation({
@@ -73,6 +77,10 @@ export default function App() {
         if (cancelled) return;
         if (meta.timezone) setTimezone(meta.timezone);
         if (meta.quick_actions.length > 0) setQuickActions(meta.quick_actions);
+        if (meta.voices && meta.voices.length > 0) {
+          setVoices(meta.voices);
+          setVoiceName((current) => current || meta.voice || meta.voices![0]);
+        }
       })
       .catch(() => {});
     return () => {
@@ -101,7 +109,7 @@ export default function App() {
     const outcome = await voice.stop();
     if (!outcome) return;
     if (outcome.kind === "text") {
-      await chat.sendText(outcome.text, { speak: speakReplies });
+      await chat.sendText(outcome.text, { speak: speakReplies, voice: voiceName });
     } else if (outcome.kind === "blob") {
       await chat.sendVoice(outcome.blob);
     } else {
@@ -129,6 +137,7 @@ export default function App() {
               <p className="text-xs text-ink-muted">Голосом или текстом</p>
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             role="switch"
@@ -154,12 +163,22 @@ export default function App() {
             Озвучивать ответы
             <span className="text-[11px] opacity-70">{speakReplies ? "вкл" : "выкл"}</span>
           </button>
+          <VoiceSelect
+            voices={voices}
+            value={voiceName}
+            disabled={!speakReplies}
+            onChange={(next) => {
+              setVoiceName(next);
+              writeVoice(next);
+            }}
+          />
+          </div>
         </div>
         <LinkPanel />
         <QuickActions
           actions={quickActions}
           disabled={composerDisabled || voice.recording || conversation.active}
-          onSelect={(action) => void chat.sendText(action, { speak: speakReplies })}
+          onSelect={(action) => void chat.sendText(action, { speak: speakReplies, voice: voiceName })}
         />
       </header>
 
@@ -196,7 +215,7 @@ export default function App() {
           busy={voice.busy}
           conversationActive={conversation.active}
           conversationPhase={conversation.phase}
-          onSend={(text) => void chat.sendText(text, { speak: speakReplies })}
+          onSend={(text) => void chat.sendText(text, { speak: speakReplies, voice: voiceName })}
           onToggleRecording={() => void toggleRecording()}
         />
         <p className="min-h-5 px-4 pb-2 text-xs text-ink-dim sm:px-6" role="status">

@@ -42,6 +42,7 @@ class FakeAssistant:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.prewarm_calls = 0
+        self.voices: list[str | None] = []
         self.text_calls: list[tuple[Platform, str, str, bool, bool]] = []
         self.voice_calls: list[tuple[Platform, str, bytes, str | None, bool]] = []
         self.list_calls: list[tuple[Platform, str, Period]] = []
@@ -59,10 +60,12 @@ class FakeAssistant:
         *,
         speak: bool = False,
         closing: bool = False,
+        voice: str | None = None,
     ) -> AssistantResponse:
         if self.fail:
             raise AssistantError("сервис недоступен")
         self.text_calls.append((platform, external_user_id, text, speak, closing))
+        self.voices.append(voice)
         return AssistantResponse(text=f"Ответ: {text}", events=[make_event(1)])
 
     async def handle_voice(
@@ -289,3 +292,26 @@ async def test_chat_warmup_reports_that_the_model_is_ready() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert assistant.prewarm_calls == 1
+
+
+async def test_meta_exposes_the_voice_catalogue() -> None:
+    assistant = FakeAssistant()
+    response = await request(build_app(assistant), "GET", "/api/meta")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "Mer-Operator" in body["voices"]
+    assert body["voice"] == "Mer-Operator"
+
+
+async def test_chat_forwards_the_selected_voice() -> None:
+    assistant = FakeAssistant()
+    response = await request(
+        build_app(assistant),
+        "POST",
+        "/api/chat",
+        json={"text": "Что на завтра?", "client_id": "web-demo", "speak": True, "voice": "Kaz-Lifelike"},
+    )
+
+    assert response.status_code == 200
+    assert assistant.voices == ["Kaz-Lifelike"]

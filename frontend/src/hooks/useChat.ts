@@ -18,6 +18,7 @@ export interface ChatController {
     options?: {
       speak?: boolean;
       closing?: boolean;
+      voice?: string;
       /** Reports the assistant entry id as soon as the reply is appended. */
       onReplyEntry?: (entryId: string) => void;
     },
@@ -49,6 +50,7 @@ export function useChat(): ChatController {
       options?: {
         speak?: boolean;
         closing?: boolean;
+        voice?: string;
         onReplyEntry?: (entryId: string) => void;
       },
     ): Promise<ChatTurnResult> => {
@@ -63,6 +65,7 @@ export function useChat(): ChatController {
           clientId,
           options?.speak ?? false,
           options?.closing ?? false,
+          options?.voice ?? "",
         );
         const replyId = nextId();
         append({ id: replyId, role: "assistant", reply });

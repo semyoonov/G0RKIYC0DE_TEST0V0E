@@ -37,6 +37,7 @@ class ChatPayload(BaseModel):
     client_id: str = Field(default=DEFAULT_CLIENT_ID, min_length=1, max_length=128)
     speak: bool = False
     closing: bool = False
+    voice: str | None = Field(default=None, max_length=32)
 
     @field_validator("text")
     @classmethod
@@ -119,6 +120,8 @@ def build_router(
             "quick_actions": list(QUICK_ACTIONS),
             "mini_apps": settings.mini_app_links(),
             "platforms": [platform.value for platform in Platform],
+            "voices": settings.tts_voices,
+            "voice": settings.tts_voice,
         }
 
     @router.post("/api/chat")
@@ -131,6 +134,7 @@ def build_router(
                 payload.text,
                 speak=payload.speak,
                 closing=payload.closing,
+                voice=payload.voice,
             )
         except AssistantError as exc:
             log.exception("web chat request failed")

@@ -25,7 +25,6 @@ describe("isFarewellUtterance", () => {
     "Покажи задачи на сегодня",
     "Спасибо за подробный ответ, это очень полезно",
     "на этом этапе всё хорошо",
-    "до встречи",
     "на этом",
     "этом всё на",
     "на этом всё спасибо вам",
@@ -46,5 +45,19 @@ describe("isFarewellUtterance", () => {
   it("does not match a farewell word inside another word", () => {
     expect(isFarewellUtterance("показать")).toBe(false);
     expect(isFarewellUtterance("спасибочки")).toBe(false);
+  });
+
+  it("accepts the added closing phrases", () => {
+    for (const phrase of [
+      "благодарю",
+      "до связи",
+      "всего доброго",
+      "всё на этом",
+      "закончили",
+      "отбой",
+      "до встречи",
+    ]) {
+      expect(isFarewellUtterance(phrase)).toBe(true);
+    }
   });
 });

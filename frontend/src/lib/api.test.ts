@@ -99,3 +99,15 @@ describe("warmupChat", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("postChat voice", () => {
+  it("sends the chosen voice and omits it when empty", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(REPLY));
+    await postChat("Что на завтра?", "client-1", true, false, "Gli-Operator");
+    expect(requestBody(requestAt(0).init)).toMatchObject({ voice: "Gli-Operator" });
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(REPLY));
+    await postChat("Что на завтра?", "client-1", true, false, "");
+    expect(requestBody(requestAt(1).init)).not.toHaveProperty("voice");
+  });
+});

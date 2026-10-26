@@ -5,11 +5,28 @@
  */
 export const FAREWELL_MAX_WORDS = 4;
 
-const FAREWELL_WORDS = new Set(["спасибо", "спс", "пока", "хватит"]);
+const FAREWELL_WORDS = new Set([
+  "спасибо",
+  "спс",
+  "благодарю",
+  "пока",
+  "прощай",
+  "хватит",
+  "отбой",
+]);
 
 const FAREWELL_PHRASES: ReadonlyArray<ReadonlyArray<string>> = [
   ["до", "свидания"],
+  ["до", "связи"],
+  ["до", "встречи"],
+  ["всего", "доброго"],
+  ["все", "хорошего"],
   ["на", "этом", "все"],
+  ["все", "на", "этом"],
+  ["на", "сегодня", "все"],
+  ["закончили"],
+  ["завершаем"],
+  ["это", "все"],
 ];
 
 /** Lower-cased words without punctuation, with ё folded to е. */

@@ -23,6 +23,18 @@ _PROCESS_TIMEOUT_SECONDS = 60.0
 _OPUS_ARGS = ("-c:a", "libopus", "-b:a", "32k", "-f", "ogg")
 _MP3_ARGS = ("-c:a", "libmp3lame", "-b:a", "64k", "-f", "mp3")
 
+CLOUD_TTS_VOICES: tuple[str, ...] = (
+    "Mer-Operator",
+    "Kaz-Lifelike",
+    "Tsb-Freespeech",
+    "Gli-Operator",
+    "Gli-Freespeech",
+    "Bab-Debate",
+    "Bab-Energetic",
+    "Bab-Freespeech",
+    "Tsb-Hesitating",
+)
+
 FetchAudio = Callable[[str, str], Awaitable[bytes]]
 
 

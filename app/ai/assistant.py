@@ -110,6 +110,7 @@ class AssistantService:
         speak: bool = False,
         audio_format: str | None = None,
         closing: bool = False,
+        voice: str | None = None,
     ) -> AssistantResponse:
         normalized = " ".join((text or "").split())
         if not normalized:
@@ -125,7 +126,9 @@ class AssistantService:
             log.exception("assistant crashed")
             return AssistantResponse(text=ERROR_TEXT)
         if speak:
-            await self._attach_audio(response, self._preferred_audio_format(platform, audio_format))
+            await self._attach_audio(
+                response, self._preferred_audio_format(platform, audio_format), voice
+            )
         return response
 
     async def prewarm(self) -> bool:
@@ -349,12 +352,17 @@ class AssistantService:
             return "opus"
         return requested
 
-    async def _attach_audio(self, response: AssistantResponse, audio_format: str | None) -> None:
+    async def _attach_audio(
+        self,
+        response: AssistantResponse,
+        audio_format: str | None,
+        voice: str | None = None,
+    ) -> None:
         if self._tts is None or not self._settings.tts_enabled or not response.text:
             return
         requested = _normalize_audio_format(audio_format or self._settings.sber_tts_format)
         try:
-            audio = await self._tts.synthesize(response.text, audio_format=requested)
+            audio = await self._tts.synthesize(response.text, audio_format=requested, voice=voice)
         except AssistantError as error:
             log.warning("speech synthesis failed: %s", error)
             return

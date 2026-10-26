@@ -109,6 +109,16 @@ class Settings(BaseSettings):
         return bool(self.cloud_tts_api_key.strip())
 
     @property
+    def tts_voices(self) -> list[str]:
+        from app.ai.tts.cloud_tts import CLOUD_TTS_VOICES
+
+        return list(CLOUD_TTS_VOICES)
+
+    @property
+    def tts_voice(self) -> str:
+        return self.cloud_tts_voice
+
+    @property
     def resolved_tts_backend(self) -> str:
         backend = self.tts_backend.strip().lower()
         if backend in {"cloud", "sber", "local"}:

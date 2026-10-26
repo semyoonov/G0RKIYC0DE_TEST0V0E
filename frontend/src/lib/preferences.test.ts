@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readSpeakReplies, writeSpeakReplies } from "./preferences";
+import { readSpeakReplies, readVoice, writeSpeakReplies, writeVoice } from "./preferences";
 
 describe("preferences", () => {
   afterEach(() => {
@@ -21,5 +21,17 @@ describe("preferences", () => {
     writeSpeakReplies(false);
     writeSpeakReplies(true);
     expect(readSpeakReplies()).toBe(true);
+  });
+
+  it("по умолчанию голос не выбран", () => {
+    expect(readVoice()).toBe("");
+  });
+
+  it("запоминает выбранный голос и умеет его сбросить", () => {
+    writeVoice("Bab-Energetic");
+    expect(readVoice()).toBe("Bab-Energetic");
+    writeVoice("");
+    expect(readVoice()).toBe("");
+    expect(window.localStorage.getItem("assistant.ttsVoice")).toBeNull();
   });
 });

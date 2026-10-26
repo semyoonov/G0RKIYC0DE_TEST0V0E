@@ -64,6 +64,8 @@ export interface Meta {
   quick_actions: string[];
   mini_apps: MiniApps;
   platforms: SessionPlatform[];
+  voices?: string[];
+  voice?: string;
 }
 
 export type ChatEntry =
