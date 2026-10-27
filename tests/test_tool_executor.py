@@ -61,6 +61,17 @@ async def test_create_meeting_requires_time(executor):
     assert "время" in result.content
 
 
+async def test_create_meeting_requires_title(executor):
+    start = NOW + timedelta(days=1)
+    result_none = await executor.execute("create_meeting", {"starts_at": start.isoformat()})
+    assert result_none.failed
+    assert "как назвать" in result_none.content
+
+    result_generic = await executor.execute("create_meeting", {"title": "Встреча", "starts_at": start.isoformat()})
+    assert result_generic.failed
+    assert "как назвать" in result_generic.content
+
+
 async def test_create_meeting_warns_about_conflict(executor):
     start = NOW + timedelta(days=2)
     await executor.execute("create_meeting", {"title": "с командой", "starts_at": start.isoformat()})

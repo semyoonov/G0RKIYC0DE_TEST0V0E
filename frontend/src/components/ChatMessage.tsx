@@ -63,12 +63,12 @@ export function ChatMessage({
         </p>
       ) : null}
       {action ? (
-        <p className="px-1 text-[11px] uppercase tracking-[0.12em] text-ink-dim">{action}</p>
+        <p className="px-1 text-xs font-medium text-ink-muted">{action}</p>
       ) : null}
       {showCards ? (
-        <ul className="grid gap-2 sm:grid-cols-2">
+        <ul className="grid gap-2.5 sm:grid-cols-2">
           {reply.events.map((event) => (
-            <li key={event.id}>
+            <li key={event.id} className="min-w-0">
               <EventCard event={event} timezone={timezone} onComplete={onComplete} />
             </li>
           ))}

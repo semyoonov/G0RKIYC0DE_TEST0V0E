@@ -150,6 +150,22 @@ async def test_tool_error_without_model_answer_is_shown(session_factory, cloud_s
     assert response.needs_clarification is True
 
 
+async def test_meeting_without_title_asks_how_to_name(session_factory, cloud_settings):
+    llm = FakeLLM(
+        ChatCompletion(content="", function_call=FunctionCall("create_meeting", '{"starts_at": "2025-03-05T10:00:00+03:00"}')),
+        ChatCompletion(content=""),
+        ChatCompletion(content=""),
+        ChatCompletion(content=""),
+    )
+    assistant = AssistantService(session_factory, cloud_settings, llm=llm)
+
+    response = await assistant.handle_text(Platform.WEB, "web-demo", "Поставь встречу на завтра в 10:00")
+
+    assert response.text == "Как назвать встречу?"
+    assert response.needs_clarification is True
+    assert response.events == []
+
+
 async def test_requests_without_llm_return_configuration_hint(session_factory, settings):
     assistant = AssistantService(session_factory, settings)
 

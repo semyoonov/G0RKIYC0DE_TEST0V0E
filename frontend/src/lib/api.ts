@@ -287,11 +287,12 @@ export async function warmupChat(): Promise<void> {
   }
 }
 
-export async function postVoice(blob: Blob, clientId: string): Promise<ChatReply> {
+export async function postVoice(blob: Blob, clientId: string, voice?: string): Promise<ChatReply> {
   const form = new FormData();
   const extension = blob.type.includes("ogg") ? "ogg" : "webm";
   form.append("audio", blob, `voice.${extension}`);
   form.append("client_id", clientId);
+  if (voice) form.append("voice", voice);
   return requestWithSession<ChatReply>("/api/voice", { method: "POST", body: form });
 }
 

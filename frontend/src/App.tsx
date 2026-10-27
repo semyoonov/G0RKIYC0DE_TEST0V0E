@@ -183,7 +183,7 @@ export default function App() {
         signal: nextSpeechSignal(),
       });
     } else if (outcome.kind === "blob") {
-      await chat.sendVoice(outcome.blob);
+      await chat.sendVoice(outcome.blob, { voice: activeVoice });
     } else {
       chat.reportError(outcome.message);
     }

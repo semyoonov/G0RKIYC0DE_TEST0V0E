@@ -158,10 +158,29 @@ class ToolExecutor:
             content += f" Напомню {format_datetime(remind_at, self.tz)}."
         return ToolResult("create_task", content, [to_read(event)])
 
+    _GENERIC_MEETING_TITLES = frozenset({
+        "встреча",
+        "встречу",
+        "встречи",
+        "meeting",
+        "без названия",
+        "новая встреча",
+    })
+
+    def _is_empty_or_generic_meeting_title(self, title: str | None) -> bool:
+        if not title:
+            return True
+        cleaned = title.strip(" .!?:;«»\"'").lower()
+        if cleaned in self._GENERIC_MEETING_TITLES:
+            return True
+        if cleaned.startswith("встреча на ") or cleaned.startswith("встреча в ") or cleaned.startswith("встреча к "):
+            return True
+        return False
+
     async def _create_meeting(self, arguments: dict[str, Any]) -> ToolResult:
         title = self._text(arguments.get("title"))
-        if not title:
-            return self._error("create_meeting", "с кем или о чём встреча?")
+        if self._is_empty_or_generic_meeting_title(title):
+            return self._error("create_meeting", "как назвать встречу?")
         starts_at = parse_datetime(arguments.get("starts_at"), self.tz)
         if starts_at is None:
             return self._error("create_meeting", "на какое время поставить встречу?")

@@ -38,7 +38,7 @@ export interface ChatController {
   /** Assistant entry whose speech is being synthesised right now. */
   synthesizingEntryId: string | null;
   sendText: (text: string, options?: SendTextOptions) => Promise<ChatTurnResult>;
-  sendVoice: (blob: Blob) => Promise<void>;
+  sendVoice: (blob: Blob, options?: { voice?: string }) => Promise<void>;
   /** Attaches speech to an assistant entry that is already on screen. */
   attachAudio: (entryId: string, audio: string, mime: string | null) => void;
   complete: (eventId: number) => Promise<void>;
@@ -128,13 +128,13 @@ export function useChat(): ChatController {
   );
 
   const sendVoice = useCallback(
-    async (blob: Blob) => {
+    async (blob: Blob, options?: { voice?: string }) => {
       if (pending) return;
       append({ id: nextId(), role: "user", text: "Голосовое сообщение" });
       setPending(true);
       setStatus("Распознаю…");
       try {
-        const reply = await postVoice(blob, clientId);
+        const reply = await postVoice(blob, clientId, options?.voice);
         append({ id: nextId(), role: "assistant", reply });
       } catch (error) {
         append({ id: nextId(), role: "error", text: errorMessage(error) });

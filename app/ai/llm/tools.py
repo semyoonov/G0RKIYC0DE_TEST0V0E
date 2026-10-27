@@ -34,11 +34,11 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "name": "create_meeting",
-        "description": "Создать встречу. Время встречи обязательно: без него не вызывай инструмент.",
+        "description": "Создать встречу. Время и конкретное название обязательны: без них не вызывай инструмент, а спроси пользователя.",
         "parameters": {
             "type": "object",
             "properties": {
-                "title": {"type": "string", "description": "С кем или о чём встреча: «с командой», «с дизайнером»."},
+                "title": {"type": "string", "description": "С кем или о чём встреча: «с командой», «с дизайнером». Запрещено подставлять общее слово «Встреча» — если название не названо, спроси пользователя, как назвать встречу."},
                 "starts_at": {"type": "string", "description": f"Начало встречи. {_DATETIME_HINT}"},
                 "duration_minutes": {"type": "integer", "description": "Длительность в минутах, если названа."},
                 "description": {"type": "string", "description": "Дополнительные детали."},
