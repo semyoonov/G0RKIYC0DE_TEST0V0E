@@ -3,18 +3,20 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from app.core.exceptions import AssistantError
 from app.core.logger import get_logger
 from app.domain.enums import Platform
+from app.interfaces.linking import display_name_of, identity_for
 from app.interfaces.telegram.handlers.text import ERROR_TEXT
 from app.interfaces.telegram.keyboards import (
     HELP_BUTTON,
     QUICK_TODAY,
     main_keyboard,
 )
+from app.services.auth.service import AuthService, LinkCodeError
 
 if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
@@ -69,7 +71,50 @@ async def _reply_period(
 
 
 @router.message(Command("start"))
-async def handle_start(message: Message) -> None:
+async def handle_start(
+    message: Message,
+    command: CommandObject | None = None,
+    auth: AuthService | None = None,
+    settings: Settings | None = None,
+) -> None:
+    if message.from_user is None:
+        return
+    code = (command.args or "").strip() if command else ""
+    if code and auth is not None:
+        user = message.from_user
+        first_name = getattr(user, "first_name", None)
+        last_name = getattr(user, "last_name", None)
+        username = getattr(user, "username", None)
+        identity = identity_for(
+            Platform.TELEGRAM,
+            user.id,
+            display_name_of(first_name, last_name) or (f"@{username}" if username else None),
+        )
+        try:
+            await auth.redeem(identity, code)
+            logger.info("telegram: redeemed link code %s for user %s via /start", code, user.id)
+            await message.answer(
+                "✅ Аккаунт успешно привязан!\n"
+                "Теперь ваши задачи, встречи и напоминания синхронизированы между Telegram и веб-версией.\n\n"
+                f"{START_TEXT}",
+                reply_markup=main_keyboard(),
+            )
+            return
+        except LinkCodeError as exc:
+            await message.answer(
+                f"❌ Не удалось привязать аккаунт: {exc}.\n\n"
+                "Получите новый код в веб-приложении или используйте /link для создания кода.",
+                reply_markup=main_keyboard(),
+            )
+            return
+        except Exception:
+            logger.exception("telegram: link redeem failed for user %s", user.id)
+            await message.answer(
+                "❌ Не удалось привязать аккаунт, попробуйте ещё раз.",
+                reply_markup=main_keyboard(),
+            )
+            return
+
     await message.answer(START_TEXT, reply_markup=main_keyboard())
 
 

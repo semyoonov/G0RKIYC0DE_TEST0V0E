@@ -69,16 +69,37 @@ class ReminderService:
             delivered = 0
             for event in due:
                 user = event.user
-                notifier = self._notifiers.get(user.platform)
-                if notifier is None:
+                recipients: list[User] = []
+                if user.platform in self._notifiers:
+                    recipients.append(user)
+                for link in getattr(user, "links", []):
+                    if link.platform in self._notifiers:
+                        linked_user = User(
+                            id=user.id,
+                            platform=link.platform,
+                            external_id=link.external_id,
+                            username=user.username,
+                            timezone=user.timezone,
+                        )
+                        recipients.append(linked_user)
+
+                if not recipients:
                     continue
-                try:
-                    await notifier(user, event)
-                except Exception:  # noqa: BLE001 - one failing channel must not stop the loop
-                    log.exception("reminder %s delivery to %s failed", event.id, user.platform)
-                    continue
-                await repository.mark_reminder_sent(event)
-                delivered += 1
+
+                sent_any = False
+                for recipient in recipients:
+                    notifier = self._notifiers.get(recipient.platform)
+                    if notifier is None:
+                        continue
+                    try:
+                        await notifier(recipient, event)
+                        sent_any = True
+                    except Exception:  # noqa: BLE001 - one failing channel must not stop the loop
+                        log.exception("reminder %s delivery to %s:%s failed", event.id, recipient.platform, recipient.external_id)
+
+                if sent_any:
+                    await repository.mark_reminder_sent(event)
+                    delivered += 1
             return delivered
 
     async def _loop(self) -> None:

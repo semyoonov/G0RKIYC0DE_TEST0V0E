@@ -440,3 +440,59 @@ async def test_done_callback_reports_assistant_error(settings: Settings) -> None
     assert assistant.status_calls == [(Platform.TELEGRAM, "42", 5, EventStatus.DONE)]
     assert message.edits == []
     assert callback.answers == [{"text": text.ERROR_TEXT, "show_alert": True}]
+
+
+class FakeAuth:
+    def __init__(self, fail_code: str | None = None) -> None:
+        self.fail_code = fail_code
+        self.redeemed: list[tuple[Any, str]] = []
+
+    async def redeem(self, identity: Any, code: str) -> Any:
+        self.redeemed.append((identity, code))
+        if code == self.fail_code:
+            from app.services.auth.service import LinkCodeError
+            raise LinkCodeError("код не найден")
+        return SimpleNamespace(user_id=1)
+
+
+async def test_handle_start_redeems_code(settings: Settings) -> None:
+    from aiogram.filters import CommandObject
+    auth = FakeAuth()
+    message = FakeMessage(user_id=42)
+    command = CommandObject(prefix="/", command="start", args="ABC123")
+
+    await common.handle_start(message, command=command, auth=auth, settings=settings)
+
+    assert len(auth.redeemed) == 1
+    identity, code = auth.redeemed[0]
+    assert identity.platform is Platform.TELEGRAM
+    assert identity.external_id == "42"
+    assert code == "ABC123"
+    assert len(message.answers) == 1
+    assert "успешно привязан" in message.answers[0]["text"]
+
+
+async def test_handle_start_handles_invalid_code(settings: Settings) -> None:
+    from aiogram.filters import CommandObject
+    auth = FakeAuth(fail_code="BADCODE")
+    message = FakeMessage(user_id=42)
+    command = CommandObject(prefix="/", command="start", args="BADCODE")
+
+    await common.handle_start(message, command=command, auth=auth, settings=settings)
+
+    assert len(message.answers) == 1
+    assert "Не удалось привязать" in message.answers[0]["text"]
+
+
+async def test_handle_link_redeems_code(settings: Settings) -> None:
+    from aiogram.filters import CommandObject
+    auth = FakeAuth()
+    message = FakeMessage(user_id=42)
+    command = CommandObject(prefix="/", command="link", args="XYZ999")
+
+    await link.handle_link(message, auth=auth, settings=settings, command=command)
+
+    assert len(auth.redeemed) == 1
+    assert auth.redeemed[0][1] == "XYZ999"
+    assert "успешно привязан" in message.answers[0]["text"]
+

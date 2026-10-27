@@ -147,6 +147,22 @@ function hasVkLaunch(environment: LaunchEnvironment): boolean {
   return readVkPairs(environment).some(([key]) => key.startsWith("vk_"));
 }
 
+export function readLinkParam(environment: LaunchEnvironment = readLaunchEnvironment()): string | null {
+  for (const raw of [environment.search, environment.hash]) {
+    if (!raw) continue;
+    const text = raw.replace(/^[?#]/, "");
+    if (!text) continue;
+    try {
+      const params = new URLSearchParams(text);
+      const code = params.get("link") || params.get("code") || params.get("startapp") || params.get("start_param");
+      if (code && code.trim()) return code.trim();
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 export function detectPlatform(environment: LaunchEnvironment = readLaunchEnvironment()): Platform {
   if (nonEmpty(environment.telegramInitData)) return "telegram";
   if (readMaxPayload(environment)) return "max";

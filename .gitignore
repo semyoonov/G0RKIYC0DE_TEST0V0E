@@ -16,3 +16,4 @@ certs/*
 .ruff_cache/
 frontend/node_modules/
 frontend/dist/
+AGY.md

@@ -168,12 +168,15 @@ class Settings(BaseSettings):
 
     def mini_app_link(self, platform: Platform, code: str | None = None) -> str | None:
         """Public URL that opens the assistant on one platform, optionally carrying a link code."""
-        startapp = f"?startapp={code}" if code else ""
         if platform is Platform.TELEGRAM:
             username = self.telegram_bot_username.strip().lstrip("@")
-            return f"https://t.me/{username}{startapp}" if username else None
+            if not username:
+                return None
+            start = f"?start={code}" if code else ""
+            return f"https://t.me/{username}{start}"
         if platform is Platform.MAX:
             username = self.max_bot_username.strip().lstrip("@")
+            startapp = f"?startapp={code}" if code else ""
             return f"https://max.ru/{username}{startapp}" if username else None
         if platform is Platform.VK:
             return f"https://vk.com/app{self.vk_mini_app_id}" if self.vk_mini_app_id else None

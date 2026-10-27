@@ -105,3 +105,29 @@ async def test_lookahead_window(session_factory, session, remind_in):
     service.register_notifier(Platform.WEB, notifier)
     assert await service.run_once() == 1
     assert delivered == ["Скоро"]
+
+
+async def test_linked_platform_reminder_is_delivered(session_factory, session):
+    from app.db.models.account_link import AccountLink
+
+    web_user = await UserRepository(session).get_or_create(Platform.WEB, "web-primary")
+    session.add(AccountLink(user_id=web_user.id, platform=Platform.TELEGRAM, external_id="tg-linked-999"))
+    await session.commit()
+
+    await EventRepository(session).create(
+        web_user.id,
+        EventCreate(type=EventType.REMINDER, title="Напомни в Телеграм", remind_at=NOW - timedelta(minutes=1)),
+    )
+
+    service = ReminderService(session_factory, poll_interval_seconds=1)
+    delivered: list[tuple[str, str, str]] = []
+
+    async def telegram_notifier(notified_user: User, event) -> None:
+        delivered.append((notified_user.platform.value, notified_user.external_id, event.title))
+
+    service.register_notifier(Platform.TELEGRAM, telegram_notifier)
+
+    assert await service.run_once() == 1
+    assert delivered == [("telegram", "tg-linked-999", "Напомни в Телеграм")]
+    assert await service.run_once() == 0
+

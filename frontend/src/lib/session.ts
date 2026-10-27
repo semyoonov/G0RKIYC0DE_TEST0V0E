@@ -14,7 +14,7 @@ import {
   setSessionRecovery,
   writeSessionToken,
 } from "./api";
-import { detectLaunch, type Platform } from "./platform";
+import { detectLaunch, readLinkParam, type Platform } from "./platform";
 
 export type SessionStatus = "idle" | "loading" | "ready" | "error";
 
@@ -109,12 +109,13 @@ async function runBootstrap(): Promise<void> {
       await loginFresh();
       return;
     }
+    const linkCode = readLinkParam();
     const stored = readSessionToken();
+    let currentSession: AuthSession | null = null;
     if (stored) {
       try {
-        const session = await fetchMe(stored);
-        applySession(session);
-        return;
+        currentSession = await fetchMe(stored);
+        applySession(currentSession);
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 401) {
           fail(error);
@@ -123,7 +124,16 @@ async function runBootstrap(): Promise<void> {
         clearSessionToken();
       }
     }
-    await loginFresh();
+    if (!currentSession) {
+      currentSession = await loginFresh();
+    }
+    if (linkCode && currentSession) {
+      try {
+        await linkWithCode(linkCode);
+      } catch {
+        // Link code might be expired or already redeemed; continue with current session
+      }
+    }
   } catch (error) {
     fail(error);
   }

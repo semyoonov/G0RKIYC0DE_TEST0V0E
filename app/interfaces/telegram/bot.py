@@ -43,8 +43,14 @@ async def run_telegram_bot(assistant: AssistantService, settings: Settings, auth
     )
     dispatcher = create_dispatcher()
     try:
+        try:
+            me = await bot.get_me()
+            if me.username:
+                settings.telegram_bot_username = me.username
+            logger.info("telegram: polling started for @%s", me.username)
+        except Exception:
+            logger.info("telegram: polling started")
         await bot.set_my_commands(list(BOT_COMMANDS))
-        logger.info("telegram: polling started")
         await dispatcher.start_polling(
             bot,
             assistant=assistant,

@@ -6,6 +6,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.core.timeutils import to_db, utcnow
+from app.db.models.account_link import AccountLink
 from app.db.models.event import Event
 from app.db.models.user import User
 from app.domain.enums import EventStatus, EventType, Platform
@@ -223,7 +224,7 @@ class EventRepository(BaseRepository[Event]):
         statement = (
             select(Event)
             .join(User, Event.user_id == User.id)
-            .options(selectinload(Event.user))
+            .options(selectinload(Event.user).selectinload(User.links))
             .where(
                 Event.remind_at.is_not(None),
                 Event.remind_at >= lower,
@@ -233,7 +234,12 @@ class EventRepository(BaseRepository[Event]):
             )
         )
         if platforms:
-            statement = statement.where(User.platform.in_(list(platforms)))
+            statement = statement.where(
+                or_(
+                    User.platform.in_(list(platforms)),
+                    User.links.any(AccountLink.platform.in_(list(platforms))),
+                )
+            )
         statement = statement.order_by(Event.remind_at.asc()).limit(limit)
         result = await self.session.execute(statement)
         return list(result.scalars().all())

@@ -74,6 +74,16 @@ class AccountRepository(BaseRepository[User]):
             await self.session.execute(
                 update(Event).where(Event.user_id == current.id).values(user_id=target.id)
             )
+            existing_links = (
+                await self.session.execute(
+                    select(AccountLink).where(AccountLink.user_id == current.id)
+                )
+            ).scalars().all()
+            for existing_link in existing_links:
+                if existing_link.platform is target.platform and existing_link.external_id == target.external_id:
+                    await self.session.delete(existing_link)
+                else:
+                    existing_link.user_id = target.id
             await self.session.delete(current)
 
         link = await self._link_for(identity.platform, identity.external_id)

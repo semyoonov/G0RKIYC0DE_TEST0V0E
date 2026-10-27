@@ -94,6 +94,18 @@ class Application:
     async def start(self) -> None:
         if self.settings.auto_create_tables:
             await self.db.create_all()
+        if self.settings.telegram_enabled:
+            try:
+                temp_bot = Bot(token=self.settings.telegram_bot_token)
+                try:
+                    me = await temp_bot.get_me()
+                    if me.username:
+                        self.settings.telegram_bot_username = me.username
+                        log.info("telegram: detected bot username @%s", me.username)
+                finally:
+                    await temp_bot.session.close()
+            except Exception as exc:
+                log.warning("telegram: failed to fetch bot username: %s", exc)
         self._start_web()
         if self.settings.telegram_enabled:
             self.tasks.append(asyncio.create_task(self._run_telegram(), name="telegram-bot"))

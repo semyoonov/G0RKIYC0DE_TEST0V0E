@@ -248,7 +248,7 @@ async def test_open_session_rejects_bad_launch_data(auth: AuthService) -> None:
 async def test_issue_code_reports_mini_app_links(auth: AuthService) -> None:
     issued = await auth.issue_link_code(Identity(Platform.TELEGRAM, "42"))
 
-    assert issued["mini_apps"]["telegram"].startswith("https://t.me/hackathon_helperbot?startapp=")
+    assert issued["mini_apps"]["telegram"].startswith("https://t.me/hackathon_helperbot?start=")
     assert issued["mini_apps"]["max"].startswith("https://max.ru/helper_max?startapp=")
     assert issued["mini_apps"]["vk"] == f"https://vk.com/app{VK_APP_ID}"
     assert issued["web_link"].startswith("https://assistant.test/?link=")
