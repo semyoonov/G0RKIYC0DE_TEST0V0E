@@ -34,7 +34,7 @@ export function ChatMessage({
 
   if (entry.role === "error") {
     return (
-      <div className="flex justify-start">
+      <div className="flex justify-start animate-message-in motion-reduce:animate-none">
         <div className="max-w-[92%] break-words rounded-2xl rounded-bl-md border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
           {entry.text}
         </div>
@@ -51,7 +51,8 @@ export function ChatMessage({
     entry.audio ?? (reply.audio ? { data: reply.audio, mime: reply.audio_mime } : null);
 
   return (
-    <div className="flex flex-col gap-2">
+    // Ответ мягко проявляется на месте пузыря «Отвечаю».
+    <div className="flex flex-col gap-2 animate-message-in motion-reduce:animate-none">
       <div className="max-w-[92%] break-words rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm leading-relaxed text-ink">
         {reply.reply}
       </div>

@@ -18,13 +18,22 @@ describe("VoiceSelect", () => {
     expect(onChange).toHaveBeenCalledWith("Bab-Energetic");
   });
 
-  it("shows nothing without a catalogue", () => {
-    const { container } = render(<VoiceSelect voices={[]} value="" onChange={vi.fn()} />);
-    expect(container).toBeEmptyDOMElement();
+  it("stays on screen with the server default voice until the catalogue arrives", () => {
+    render(<VoiceSelect voices={[]} value="Kaz-Lifelike" onChange={vi.fn()} />);
+
+    const select = screen.getByLabelText("Голос озвучки") as HTMLSelectElement;
+    expect(select).toBeEnabled();
+    expect(select.value).toBe("");
+    expect([...select.options].map((option) => option.textContent)).toEqual(["Стандартный"]);
   });
 
-  it("locks the picker when only one voice is available", () => {
-    render(<VoiceSelect voices={["Mer-Operator"]} value="" onChange={vi.fn()} />);
+  it("locks the picker only when replies are text-only", () => {
+    const { rerender } = render(
+      <VoiceSelect voices={["Mer-Operator"]} value="" disabled onChange={vi.fn()} />,
+    );
     expect(screen.getByLabelText("Голос озвучки")).toBeDisabled();
+
+    rerender(<VoiceSelect voices={["Mer-Operator"]} value="" onChange={vi.fn()} />);
+    expect(screen.getByLabelText("Голос озвучки")).toBeEnabled();
   });
 });
