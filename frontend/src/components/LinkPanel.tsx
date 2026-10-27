@@ -1,7 +1,8 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
-import { ChevronDown, Link2 } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { Settings } from "lucide-react";
 
 import { errorMessage } from "../lib/api";
+import { cn } from "../lib/utils";
 import { PLATFORM_TITLES } from "../lib/platform";
 import {
   bootstrapSession,
@@ -54,6 +55,8 @@ export function LinkPanel() {
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkedNotice, setLinkedNotice] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelId = useId();
   const inputId = useId();
 
@@ -70,10 +73,34 @@ export function LinkPanel() {
   const title = identity?.platform_title ?? "Вход в аккаунт";
   const canUseAccount = Boolean(current) && Boolean(getToken());
 
+  const close = useCallback(() => {
+    setLinkedNotice(false);
+    setOpen(false);
+  }, []);
+
   const toggle = () => {
-    if (open) setLinkedNotice(false);
-    setOpen(!open);
+    if (open) close();
+    else setOpen(true);
   };
+
+  // Поповер живёт поверх чата: закрываем по клику мимо и по Esc.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) close();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      close();
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, close]);
 
   const handleRequestCode = async () => {
     if (codeBusy) return;
@@ -105,32 +132,40 @@ export function LinkPanel() {
     }
   };
 
+  const subtitle = triggerSubtitle(session.status, displayName);
+
   return (
-    <div className="flex w-full min-w-0 flex-col gap-2">
+    <div ref={rootRef} className="relative shrink-0">
       <button
+        ref={triggerRef}
         type="button"
         aria-expanded={open}
         aria-controls={panelId}
+        aria-label={`${title}: ${subtitle}. Аккаунт и настройки`}
+        title="Аккаунт и настройки"
         onClick={toggle}
-        className="flex min-h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-line bg-panel/70 px-3 py-2 text-left transition-colors hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        className={cn(
+          "inline-flex size-9 items-center justify-center rounded-full border bg-card transition-colors hover:border-accent/50 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+          open ? "border-accent/50 text-ink" : "border-line text-ink-muted",
+        )}
       >
-        <span className="flex min-w-0 items-center gap-2">
-          <Link2 className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-medium text-ink">{title}</span>
-            <span className="block truncate text-[11px] text-ink-muted">
-              {triggerSubtitle(session.status, displayName)}
-            </span>
-          </span>
+        <span className="relative" aria-hidden="true">
+          <Settings
+            className={cn("size-4 transition-transform duration-300", open && "rotate-90 text-accent")}
+          />
+          {session.status === "loading" ? (
+            <span className="absolute -right-0.5 -top-0.5 size-1.5 animate-pulse rounded-full bg-warning" />
+          ) : null}
         </span>
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-ink-dim transition-transform ${open ? "rotate-180" : ""}`}
-          aria-hidden="true"
-        />
       </button>
 
       {open ? (
-        <Card id={panelId} className="w-full min-w-0">
+        <Card
+          id={panelId}
+          role="dialog"
+          aria-label="Аккаунт и привязка"
+          className="absolute right-0 top-full z-30 mt-2 max-h-[calc(100dvh-6rem)] w-[min(24rem,calc(100vw-2rem))] min-w-0 overflow-y-auto shadow-2xl shadow-black/50"
+        >
           <CardContent className="min-w-0 space-y-4 break-words p-4">
             <section className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-ink-dim">Платформа</p>
