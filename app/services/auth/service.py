@@ -11,6 +11,7 @@ from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
@@ -167,6 +168,77 @@ class AuthService:
             user = await repository.resolve(identity, self._settings.timezone)
             linked = tuple(await repository.identities(user))
         return self._session(LaunchContext(identity), user_id=user.id, linked=linked)
+
+    def is_demo_email(self, email: str) -> bool:
+        """True when the address is the configured demo login (no letter, shared profile)."""
+        demo = self._settings.demo_login_email.strip().lower()
+        if not demo:
+            return False
+        try:
+            return normalize_email(email) == demo
+        except EmailAuthError:
+            return False
+
+    async def open_demo_session(self) -> Session:
+        """Sign in to the single shared demo profile without sending an email.
+
+        The profile is created on first use and reused afterwards, so every visitor
+        who enters the demo address sees the same tasks and meetings.
+        """
+        demo = self._settings.demo_login_email.strip().lower()
+        if not demo:
+            raise EmailAuthError("Демо-вход отключён.")
+        for attempt in (1, 2):
+            try:
+                return await self._open_demo_session(demo)
+            except IntegrityError:
+                # Two first-time visitors raced to create the profile: the second one
+                # simply reads the row the first one committed.
+                if attempt == 2:
+                    raise
+        raise AssertionError("unreachable")
+
+    async def _open_demo_session(self, demo: str) -> Session:
+        moment = to_db(utcnow())
+        async with self._session_factory() as session:
+            repository = AccountRepository(session)
+            email_row = await session.scalar(select(UserEmail).where(UserEmail.email_normalized == demo))
+            if email_row is None:
+                web_identity_id = self._new_web_identity_id()
+                user = User(
+                    platform=Platform.WEB,
+                    external_id=web_identity_id,
+                    username="demo",
+                    timezone=self._settings.timezone,
+                )
+                session.add(user)
+                await session.flush()
+                session.add(
+                    UserEmail(
+                        user_id=user.id,
+                        email_normalized=demo,
+                        web_identity_id=web_identity_id,
+                        verified_at=moment,
+                        created_at=moment,
+                    )
+                )
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    await session.rollback()
+                    raise
+                await session.refresh(user)
+            else:
+                user = await session.get(User, email_row.user_id)
+                if user is None:
+                    raise EmailAuthError("Не удалось найти демо-аккаунт.")
+                web_identity_id = email_row.web_identity_id
+            linked = tuple(await repository.identities(user))
+        return self._session(
+            LaunchContext(Identity(Platform.WEB, web_identity_id)),
+            user_id=user.id,
+            linked=linked,
+        )
 
     async def request_email_code(self, email: str, identity: Identity | None = None) -> None:
         """Send a code to log in, or attach the verified email to an existing identity."""

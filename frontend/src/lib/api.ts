@@ -131,8 +131,14 @@ export async function fetchMe(token: string): Promise<AuthSession> {
   );
 }
 
-export async function requestEmailCode(email: string): Promise<{ message: string }> {
-  return requestWithToken<{ message: string }>("/api/auth/email/request", {
+export interface EmailRequestResponse {
+  message: string;
+  /** Present only for the demo address: the visitor is signed in without a letter. */
+  demo_session?: AuthSession;
+}
+
+export async function requestEmailCode(email: string): Promise<EmailRequestResponse> {
+  return requestWithToken<EmailRequestResponse>("/api/auth/email/request", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),

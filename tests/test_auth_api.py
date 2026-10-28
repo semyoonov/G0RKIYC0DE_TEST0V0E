@@ -263,3 +263,40 @@ async def test_meta_exposes_configured_platforms(session_factory, platform: str,
     assert platform in body["platforms"]
     assert token_name
     assert f"https://vk.com/app{VK_APP_ID}" in body["mini_apps"].values()
+
+
+async def test_demo_email_signs_in_without_letter_and_shares_one_profile(session_factory) -> None:
+    app, _ = build_app(session_factory)
+    sender = app.state.test_email_sender
+
+    first = await request(app, "POST", "/api/auth/email/request", json={"email": "test@test.com"})
+    second = await request(app, "POST", "/api/auth/email/request", json={"email": " TEST@test.com "})
+
+    assert first.status_code == 200 and second.status_code == 200
+    assert sender.sent == []
+    one, two = first.json()["demo_session"], second.json()["demo_session"]
+    assert one["user"]["id"] == two["user"]["id"]
+    assert one["identity"]["external_id"].startswith("email-")
+
+    me = await request(app, "GET", "/api/auth/me", headers={"Authorization": f"Bearer {one['token']}"})
+    assert me.status_code == 200
+    assert me.json()["user"]["id"] == one["user"]["id"]
+
+
+async def test_demo_login_can_be_disabled(session_factory) -> None:
+    app, _ = build_app(session_factory, auth_settings(demo_login_email=""))
+
+    response = await request(app, "POST", "/api/auth/email/request", json={"email": "test@test.com"})
+
+    assert "demo_session" not in response.json()
+    assert len(app.state.test_email_sender.sent) == 1
+
+
+async def test_regular_email_still_gets_a_code(session_factory) -> None:
+    app, _ = build_app(session_factory)
+
+    response = await request(app, "POST", "/api/auth/email/request", json={"email": "user@example.com"})
+
+    assert response.status_code == 200
+    assert "demo_session" not in response.json()
+    assert app.state.test_email_sender.sent[-1][0] == "user@example.com"

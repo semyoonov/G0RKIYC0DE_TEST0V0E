@@ -24,7 +24,9 @@ export function AuthPanel({ initialError = null }: AuthPanelProps) {
     setError(null);
     setNotice(null);
     try {
-      await requestEmailCode(email);
+      const signedIn = await requestEmailCode(email);
+      // Demo address: the session is already open and App renders the chat.
+      if (signedIn) return;
       setCodeRequested(true);
       setNotice("Если адрес корректен, письмо с кодом отправлено. Проверьте также папку «Спам».");
     } catch (requestError) {

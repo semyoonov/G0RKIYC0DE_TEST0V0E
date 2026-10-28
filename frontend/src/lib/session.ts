@@ -179,8 +179,14 @@ export function getToken(): string | null {
   return readSessionToken();
 }
 
-export async function requestEmailCode(email: string): Promise<void> {
-  await requestEmailCodeApi(email.trim());
+/** Resolves to true when the demo address signed the visitor in and no code is needed. */
+export async function requestEmailCode(email: string): Promise<boolean> {
+  const response = await requestEmailCodeApi(email.trim());
+  if (response?.demo_session) {
+    applySession(response.demo_session);
+    return true;
+  }
+  return false;
 }
 
 export async function loginWithEmail(email: string, code: string): Promise<AuthSession> {

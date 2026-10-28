@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     email_code_ttl_seconds: int = 600
     email_code_max_attempts: int = 5
     email_code_cooldown_seconds: int = 60
+    # Demo login: this address signs in without a letter and shares one test profile.
+    # Leave empty to disable (recommended for real production data).
+    demo_login_email: str = "test@test.com"
     ws_max_concurrent_streams: int = 4
 
     enable_scheduler: bool = True

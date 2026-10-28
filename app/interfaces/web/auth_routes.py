@@ -95,7 +95,14 @@ def build_auth_router(auth: AuthService) -> APIRouter:
     settings = auth.settings
 
     @router.post("/email/request")
-    async def request_email_code(payload: EmailRequestPayload, request: Request) -> dict[str, str]:
+    async def request_email_code(payload: EmailRequestPayload, request: Request) -> dict[str, Any]:
+        if auth.is_demo_email(payload.email):
+            # Demo login: no letter, the visitor is signed straight into the shared test profile.
+            session = await auth.open_demo_session()
+            return {
+                "message": "Демо-вход выполнен.",
+                "demo_session": session.as_dict(links=settings.mini_app_links()),
+            }
         identity = _email_flow_identity(request, auth)
         try:
             await auth.request_email_code(payload.email, identity)
