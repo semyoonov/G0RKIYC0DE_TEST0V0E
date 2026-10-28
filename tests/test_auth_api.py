@@ -64,11 +64,38 @@ class FakeAssistant:
         return [make_event(2)]
 
 
+class FakeEmailSender:
+    configured = True
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def send_login_code(self, email: str, code: str) -> None:
+        self.sent.append((email, code))
+
+
 def build_app(session_factory, settings: Settings | None = None) -> tuple[Any, FakeAssistant]:
     assistant = FakeAssistant()
-    auth = AuthService(session_factory, settings or auth_settings())
-    app = create_app(assistant, settings or auth_settings(), auth=auth)
+    active_settings = settings or auth_settings()
+    sender = FakeEmailSender()
+    auth = AuthService(session_factory, active_settings, email_sender=sender)
+    app = create_app(assistant, active_settings, auth=auth)
+    app.state.test_email_sender = sender
     return app, assistant
+
+
+async def create_web_session(app: Any, email: str) -> dict[str, Any]:
+    requested = await request(app, "POST", "/api/auth/email/request", json={"email": email})
+    assert requested.status_code == 200
+    code = app.state.test_email_sender.sent[-1][1]
+    verified = await request(
+        app,
+        "POST",
+        "/api/auth/email/verify",
+        json={"email": email, "code": code},
+    )
+    assert verified.status_code == 200, verified.text
+    return verified.json()
 
 
 async def request(app: Any, method: str, url: str, **kwargs: Any) -> httpx.Response:
@@ -77,23 +104,17 @@ async def request(app: Any, method: str, url: str, **kwargs: Any) -> httpx.Respo
         return await client.request(method, url, **kwargs)
 
 
-async def test_web_session_endpoint_returns_token(session_factory) -> None:
+async def test_web_session_endpoint_rejects_anonymous_login(session_factory) -> None:
     app, _ = build_app(session_factory)
 
     response = await request(
         app,
         "POST",
         "/api/auth/session",
-        json={"platform": "web", "client_id": "web-browser-7"},
+        json={"platform": "web"},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["identity"]["platform"] == "web"
-    assert body["identity"]["external_id"] == "web-browser-7"
-    assert body["token"]
-    assert body["mini_apps"]["telegram"].startswith("https://t.me/")
-    assert body["user"]["id"] > 0
+    assert response.status_code == 401
 
 
 async def test_telegram_session_and_chat_use_token_identity(session_factory) -> None:
@@ -112,7 +133,7 @@ async def test_telegram_session_and_chat_use_token_identity(session_factory) -> 
         app,
         "POST",
         "/api/chat",
-        json={"text": "Что у меня сегодня?", "client_id": "ignored"},
+        json={"text": "Что у меня сегодня?"},
         headers={"Authorization": f"Bearer {session['token']}"},
     )
 
@@ -120,13 +141,23 @@ async def test_telegram_session_and_chat_use_token_identity(session_factory) -> 
     assert assistant.text_calls == [(Platform.TELEGRAM, "42", "Что у меня сегодня?")]
 
 
-async def test_chat_without_token_keeps_client_id(session_factory) -> None:
+async def test_chat_without_token_is_rejected(session_factory) -> None:
     app, assistant = build_app(session_factory)
 
-    response = await request(app, "POST", "/api/chat", json={"text": "Привет", "client_id": "web-legacy"})
+    response = await request(app, "POST", "/api/chat", json={"text": "Привет"})
 
-    assert response.status_code == 200
-    assert assistant.text_calls == [(Platform.WEB, "web-legacy", "Привет")]
+    assert response.status_code == 401
+    assert assistant.text_calls == []
+
+
+async def test_web_event_routes_require_a_verified_session(session_factory) -> None:
+    app, _ = build_app(session_factory)
+
+    events = await request(app, "GET", "/api/events")
+    completion = await request(app, "POST", "/api/events/1/complete")
+
+    assert events.status_code == 401
+    assert completion.status_code == 401
 
 
 async def test_invalid_launch_data_is_rejected(session_factory) -> None:
@@ -158,9 +189,7 @@ async def test_unconfigured_platform_is_unavailable(session_factory) -> None:
 
 async def test_link_code_flow_over_http(session_factory) -> None:
     app, _ = build_app(session_factory)
-    web = (
-        await request(app, "POST", "/api/auth/session", json={"platform": "web", "client_id": "web-http"})
-    ).json()
+    web = await create_web_session(app, "web-http@example.com")
     headers = {"Authorization": f"Bearer {web['token']}"}
 
     issued = (await request(app, "POST", "/api/auth/code", headers=headers)).json()
@@ -176,7 +205,7 @@ async def test_link_code_flow_over_http(session_factory) -> None:
         )
     ).json()
     assert linked["link_redeemed"] is True
-    assert linked["identity"]["external_id"] == "web-http"
+    assert linked["identity"]["external_id"].startswith("email-")
 
     me = (await request(app, "GET", "/api/auth/me", headers=headers)).json()
     assert me["user"]["id"] == linked["user"]["id"]
@@ -184,7 +213,7 @@ async def test_link_code_flow_over_http(session_factory) -> None:
 
 async def test_link_rejects_bad_code(session_factory) -> None:
     app, _ = build_app(session_factory)
-    web = (await request(app, "POST", "/api/auth/session", json={"platform": "web"})).json()
+    web = await create_web_session(app, "bad-link@example.com")
     headers = {"Authorization": f"Bearer {web['token']}"}
 
     response = await request(app, "POST", "/api/auth/link", json={"code": "AAAAAA"}, headers=headers)

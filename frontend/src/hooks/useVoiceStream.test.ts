@@ -37,7 +37,7 @@ describe("useVoiceStream microphone constraints", () => {
   it("asks for echo cancellation, noise suppression and auto gain", async () => {
     const { stream, stop } = fakeMicrophone();
     getUserMedia.mockResolvedValueOnce(stream);
-    const { result, unmount } = renderHook(() => useVoiceStream("client-1"));
+    const { result, unmount } = renderHook(() => useVoiceStream());
 
     await act(async () => {
       expect(await result.current.openMicrophone()).toBe(true);
@@ -63,7 +63,7 @@ describe("useVoiceStream microphone constraints", () => {
       )
       .mockResolvedValueOnce(fakeMicrophone().stream);
 
-    const { result, unmount } = renderHook(() => useVoiceStream("client-1"));
+    const { result, unmount } = renderHook(() => useVoiceStream());
     await act(async () => {
       expect(await result.current.openMicrophone()).toBe(true);
     });
@@ -80,7 +80,7 @@ describe("useVoiceStream microphone constraints", () => {
       Object.assign(new Error("denied"), { name: "NotAllowedError" }),
     );
 
-    const { result } = renderHook(() => useVoiceStream("client-1"));
+    const { result } = renderHook(() => useVoiceStream());
     await act(async () => {
       expect(await result.current.openMicrophone()).toBe(false);
     });

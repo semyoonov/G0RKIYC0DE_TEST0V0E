@@ -5,7 +5,7 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
@@ -27,14 +27,12 @@ QUICK_ACTIONS: tuple[str, ...] = (
     "Что на завтра?",
     "Что на этой неделе?",
 )
-DEFAULT_CLIENT_ID = "web-demo"
 MAX_TEXT_LENGTH = 4000
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
 
 
 class ChatPayload(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
-    client_id: str = Field(default=DEFAULT_CLIENT_ID, min_length=1, max_length=128)
     speak: bool = False
     closing: bool = False
     voice: str | None = Field(default=None, max_length=32)
@@ -92,17 +90,12 @@ _FALLBACK_HTML = """<!doctype html>
 """
 
 
-async def _conversation_owner(
-    request: Request,
-    auth: AuthService | None,
-    fallback_platform: Platform,
-    client_id: str,
-) -> tuple[Platform, str]:
-    """A signed session names the account; anonymous callers keep the legacy client id."""
+async def _conversation_owner(request: Request, auth: AuthService | None) -> tuple[Platform, str]:
+    """Return the platform identity proven by a valid session, never a client-supplied ID."""
     identity = await identity_from_request(request, auth)
-    if identity is not None:
-        return identity.platform, identity.external_id
-    return fallback_platform, client_id
+    if identity is None:
+        raise HTTPException(status_code=401, detail="Войдите в аккаунт, чтобы продолжить.")
+    return identity.platform, identity.external_id
 
 
 def build_router(
@@ -137,7 +130,7 @@ def build_router(
 
     @router.post("/api/chat")
     async def chat(payload: ChatPayload, request: Request) -> dict[str, Any]:
-        platform, external_id = await _conversation_owner(request, auth, Platform.WEB, payload.client_id)
+        platform, external_id = await _conversation_owner(request, auth)
         try:
             response = await assistant.handle_text(
                 platform,
@@ -154,13 +147,13 @@ def build_router(
 
     @router.post("/api/chat/warmup")
     async def chat_warmup(request: Request) -> dict[str, Any]:
-        await _conversation_owner(request, auth, Platform.WEB, DEFAULT_CLIENT_ID)
+        await _conversation_owner(request, auth)
         warmed = await assistant.prewarm()
         return {"status": "ok", "warmed": bool(warmed)}
 
     @router.post("/api/speech")
     async def speech(payload: SpeechPayload, request: Request) -> dict[str, Any]:
-        await _conversation_owner(request, auth, Platform.WEB, DEFAULT_CLIENT_ID)
+        await _conversation_owner(request, auth)
         result = await assistant.speak(payload.text, voice=payload.voice)
         if result is None:
             return {"audio": None, "audio_mime": None, "audio_format": None}
@@ -188,7 +181,6 @@ def build_router(
     async def voice(
         request: Request,
         audio: UploadFile = File(...),
-        client_id: str = Form(DEFAULT_CLIENT_ID, min_length=1, max_length=128),
     ) -> dict[str, Any]:
         if audio.size is not None and audio.size > MAX_AUDIO_BYTES:
             raise HTTPException(status_code=413, detail="Аудиофайл больше 20 МБ")
@@ -197,7 +189,7 @@ def build_router(
             raise HTTPException(status_code=400, detail="Аудиофайл пустой")
         if len(data) > MAX_AUDIO_BYTES:
             raise HTTPException(status_code=413, detail="Аудиофайл больше 20 МБ")
-        platform, external_id = await _conversation_owner(request, auth, Platform.WEB, client_id)
+        platform, external_id = await _conversation_owner(request, auth)
         try:
             response = await assistant.handle_voice(
                 platform,
@@ -214,10 +206,9 @@ def build_router(
     @router.get("/api/events")
     async def list_events(
         request: Request,
-        client_id: str = Query(DEFAULT_CLIENT_ID, min_length=1, max_length=128),
         period: Period = Period.TODAY,
     ) -> dict[str, Any]:
-        platform, external_id = await _conversation_owner(request, auth, Platform.WEB, client_id)
+        platform, external_id = await _conversation_owner(request, auth)
         try:
             events = await assistant.list_events(platform, external_id, Period(period))
         except AssistantError as exc:
@@ -229,9 +220,8 @@ def build_router(
     async def complete_event(
         event_id: int,
         request: Request,
-        client_id: str = Query(DEFAULT_CLIENT_ID, min_length=1, max_length=128),
     ) -> dict[str, Any]:
-        platform, external_id = await _conversation_owner(request, auth, Platform.WEB, client_id)
+        platform, external_id = await _conversation_owner(request, auth)
         try:
             event = await assistant.set_event_status(platform, external_id, event_id, EventStatus.DONE)
         except NotFoundError as exc:

@@ -1,11 +1,14 @@
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.domain.enums import Period
+from app.domain.enums import Period, Platform
+from app.domain.identity import Identity
+from app.services.auth.tokens import SessionTokenError
 from app.domain.models import AssistantResponse
 from app.interfaces.web import ws as ws_module
 from app.interfaces.web.app import create_app
@@ -23,6 +26,16 @@ class FakeAssistant:
 
     async def set_event_status(self, platform, external_user_id, event_id, status):
         return None
+
+
+class FakeAuth:
+    def __init__(self, settings) -> None:
+        self.settings = settings
+
+    async def account(self, token: str | None):
+        if token != "valid-token":
+            raise SessionTokenError("bad token")
+        return SimpleNamespace(identity=Identity(Platform.WEB, "email-test-identity"))
 
 
 class FakeStreamingSession:
@@ -57,7 +70,7 @@ def streaming_app(settings):
         sessions.append(session)
         return session
 
-    app = create_app(FakeAssistant(), settings, streaming_factory=factory)
+    app = create_app(FakeAssistant(), settings, streaming_factory=factory, auth=FakeAuth(settings))
     return app, sessions
 
 
@@ -69,11 +82,16 @@ def receive_until(websocket, message_type: str) -> dict:
     raise AssertionError(f"no {message_type} message received")
 
 
+def authenticate(websocket) -> None:
+    websocket.send_json({"type": "auth", "token": "valid-token"})
+    assert websocket.receive_json() == {"type": "ready"}
+
+
 def test_stream_relays_partials_and_final(streaming_app):
     app, sessions = streaming_app
     with TestClient(app) as client:
-        with client.websocket_connect("/ws/voice?client_id=web-demo") as websocket:
-            assert websocket.receive_json() == {"type": "ready"}
+        with client.websocket_connect("/ws/voice") as websocket:
+            authenticate(websocket)
             websocket.send_bytes(b"\x01\x00" * 320)
             partial = receive_until(websocket, "partial")
             assert partial == {"type": "partial", "text": "часть 1"}
@@ -93,10 +111,10 @@ def test_stream_reports_empty_recognition(settings):
     async def factory() -> FakeStreamingSession:
         return FakeStreamingSession(final_text="")
 
-    app = create_app(FakeAssistant(), settings, streaming_factory=factory)
+    app = create_app(FakeAssistant(), settings, streaming_factory=factory, auth=FakeAuth(settings))
     with TestClient(app) as client:
         with client.websocket_connect("/ws/voice") as websocket:
-            assert websocket.receive_json() == {"type": "ready"}
+            authenticate(websocket)
             websocket.send_json({"type": "stop"})
             error = receive_until(websocket, "error")
             assert error == {"type": "error", "message": "речь не распознана"}
@@ -111,11 +129,12 @@ def test_stream_is_disabled_without_factory(settings):
     assert error.value.code == ws_module.CLOSE_DISABLED
 
 
-def test_stream_rejects_long_client_id(streaming_app):
+def test_stream_rejects_invalid_token(streaming_app):
     app, _ = streaming_app
     with TestClient(app) as client:
         with pytest.raises(WebSocketDisconnect) as error:
-            with client.websocket_connect(f"/ws/voice?client_id={'x' * 129}") as websocket:
+            with client.websocket_connect("/ws/voice") as websocket:
+                websocket.send_json({"type": "auth", "token": "invalid-token"})
                 websocket.receive_json()
     assert error.value.code == ws_module.CLOSE_POLICY
 
@@ -124,7 +143,7 @@ def test_stream_rejects_oversized_frame(streaming_app):
     app, _ = streaming_app
     with TestClient(app) as client:
         with client.websocket_connect("/ws/voice") as websocket:
-            assert websocket.receive_json() == {"type": "ready"}
+            authenticate(websocket)
             websocket.send_bytes(b"\x00" * (ws_module.MAX_FRAME_BYTES + 1))
             error = receive_until(websocket, "error")
             assert error["type"] == "error"
@@ -134,7 +153,7 @@ def test_stream_cancel_skips_final(streaming_app):
     app, sessions = streaming_app
     with TestClient(app) as client:
         with client.websocket_connect("/ws/voice") as websocket:
-            assert websocket.receive_json() == {"type": "ready"}
+            authenticate(websocket)
             websocket.send_bytes(b"\x00\x00" * 160)
             websocket.send_json({"type": "cancel"})
             with pytest.raises(WebSocketDisconnect):
@@ -145,10 +164,10 @@ def test_stream_cancel_skips_final(streaming_app):
 
 
 def test_control_messages_ignore_malformed_json(settings):
-    app = create_app(FakeAssistant(), settings, streaming_factory=lambda: _session_factory())
+    app = create_app(FakeAssistant(), settings, streaming_factory=lambda: _session_factory(), auth=FakeAuth(settings))
     with TestClient(app) as client:
         with client.websocket_connect("/ws/voice") as websocket:
-            assert websocket.receive_json() == {"type": "ready"}
+            authenticate(websocket)
             websocket.send_text("not json")
             websocket.send_json({"type": "stop"})
             final = receive_until(websocket, "final")
@@ -164,7 +183,7 @@ def test_partial_batch_is_json_safe(streaming_app):
     app, _ = streaming_app
     with TestClient(app) as client:
         with client.websocket_connect("/ws/voice") as websocket:
-            websocket.receive_json()
+            authenticate(websocket)
             websocket.send_bytes(b"\x00\x00" * 160)
             partial = receive_until(websocket, "partial")
             json.dumps(partial)

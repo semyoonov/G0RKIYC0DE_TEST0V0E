@@ -8,6 +8,7 @@ from app.core.exceptions import AssistantError, ExternalServiceError
 from app.core.logger import get_logger
 from app.domain.enums import EventStatus, Platform
 from app.interfaces.linking import app_text, display_name_of, identity_for, link_code_text
+from app.interfaces.email_linking import confirm_email_link, request_email_link
 from app.interfaces.cards import (
     action_label,
     cards_text,
@@ -73,6 +74,30 @@ async def handle_update(
             return
         if command == "/link" and auth is not None and settings is not None:
             await _send_link_code(client, user_id, sender, auth, settings)
+            return
+        if command == "/email" and auth is not None:
+            parts = text.split(maxsplit=1)
+            if len(parts) != 2:
+                await client.send_text(user_id, "Использование: /email ваш-адрес@example.com")
+                return
+            name = sender.get("name") or sender.get("first_name")
+            identity = identity_for(
+                Platform.MAX, user_id,
+                display_name_of(name if isinstance(name, str) else None, sender.get("username")),
+            )
+            await client.send_text(user_id, await request_email_link(auth, identity, parts[1]))
+            return
+        if command == "/emailcode" and auth is not None:
+            parts = text.split()
+            if len(parts) != 3:
+                await client.send_text(user_id, "Использование: /emailcode ваш-адрес@example.com 123456")
+                return
+            name = sender.get("name") or sender.get("first_name")
+            identity = identity_for(
+                Platform.MAX, user_id,
+                display_name_of(name if isinstance(name, str) else None, sender.get("username")),
+            )
+            await client.send_text(user_id, await confirm_email_link(auth, identity, parts[1], parts[2]))
             return
         if command == "/app" and settings is not None:
             await client.send_text(user_id, app_text(settings))

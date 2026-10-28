@@ -10,6 +10,7 @@ from app.core.exceptions import AssistantError
 from app.core.logger import get_logger
 from app.domain.enums import Platform
 from app.interfaces.linking import display_name_of, identity_for
+from app.interfaces.email_linking import confirm_email_link, request_email_link
 from app.interfaces.telegram.handlers.text import ERROR_TEXT
 from app.interfaces.telegram.keyboards import (
     HELP_BUTTON,
@@ -40,7 +41,9 @@ HELP_TEXT = (
     "— встречи: «Встреча с Аней в пятницу в 15:00»\n"
     "— планы на период: «Что у меня на этой неделе?»\n"
     "— старые события: «Какие встречи были в прошлом месяце?»\n\n"
-    "Можно писать текстом или отправлять голосовые — я распознаю речь и отвечу текстом."
+    "Можно писать текстом или отправлять голосовые — я распознаю речь и отвечу текстом.\n"
+    "/email адрес@example.com — запросить код привязки по email.\n"
+    "/emailcode адрес@example.com 123456 — подтвердить код и связать аккаунт."
 )
 
 UNKNOWN_COMMAND_TEXT = "Не знаю такую команду. Откройте /help, чтобы увидеть, что я умею."
@@ -116,6 +119,45 @@ async def handle_start(
             return
 
     await message.answer(START_TEXT, reply_markup=main_keyboard())
+
+
+@router.message(Command("email"))
+async def handle_email_link_request(
+    message: Message,
+    command: CommandObject | None = None,
+    auth: AuthService | None = None,
+) -> None:
+    if message.from_user is None:
+        return
+    email = (command.args or "").strip() if command else ""
+    if not email or auth is None:
+        await message.answer("Использование: /email ваш-адрес@example.com")
+        return
+    user = message.from_user
+    name = display_name_of(getattr(user, "first_name", None), getattr(user, "last_name", None))
+    username = getattr(user, "username", None)
+    identity = identity_for(Platform.TELEGRAM, user.id, name or (f"@{username}" if username else None))
+    await message.answer(await request_email_link(auth, identity, email))
+
+
+@router.message(Command("emailcode"))
+async def handle_email_link_confirm(
+    message: Message,
+    command: CommandObject | None = None,
+    auth: AuthService | None = None,
+) -> None:
+    if message.from_user is None:
+        return
+    parts = (command.args or "").split() if command else []
+    if len(parts) != 2 or auth is None:
+        await message.answer("Использование: /emailcode ваш-адрес@example.com 123456")
+        return
+    email, code = parts
+    user = message.from_user
+    name = display_name_of(getattr(user, "first_name", None), getattr(user, "last_name", None))
+    username = getattr(user, "username", None)
+    identity = identity_for(Platform.TELEGRAM, user.id, name or (f"@{username}" if username else None))
+    await message.answer(await confirm_email_link(auth, identity, email, code), reply_markup=main_keyboard())
 
 
 @router.message(Command("help"))

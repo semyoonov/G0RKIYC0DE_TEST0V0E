@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     session_secret: str = "dev-insecure-session-secret"
     session_ttl_seconds: int = 2592000
     link_code_ttl_seconds: int = 900
+
+    # Email OTP authentication (Resend API). Keep the secrets only in .env.
+    resend_api_key: str = ""
+    email_from: str = ""
+    email_code_secret: str = ""
+    email_code_ttl_seconds: int = 600
+    email_code_max_attempts: int = 5
+    email_code_cooldown_seconds: int = 60
     ws_max_concurrent_streams: int = 4
 
     enable_scheduler: bool = True

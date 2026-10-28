@@ -15,6 +15,7 @@ from app.interfaces.linking import (
     identity_for,
     link_code_text,
 )
+from app.interfaces.email_linking import confirm_email_link, request_email_link
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -167,6 +168,19 @@ async def handle_message(
         return
     if text.lower() in {"/link", "привязать аккаунт"}:
         await _send_link_code(api, peer_id, user_id, message, auth, settings)
+        return
+    if text.startswith("/email ") and auth is not None:
+        _, _, email = text.partition(" ")
+        identity = identity_for(Platform.VK, user_id, display_name_of(None))
+        await send_text(api, peer_id, await request_email_link(auth, identity, email.strip()))
+        return
+    if text.startswith("/emailcode ") and auth is not None:
+        parts = text.split()
+        if len(parts) != 3:
+            await send_text(api, peer_id, "Использование: /emailcode ваш-адрес@example.com 123456")
+            return
+        identity = identity_for(Platform.VK, user_id, display_name_of(None))
+        await send_text(api, peer_id, await confirm_email_link(auth, identity, parts[1], parts[2]))
         return
     if text.lower() in {"/app", "приложение"}:
         app_link = settings.mini_app_link(Platform.VK)

@@ -77,7 +77,6 @@ const fetchMock = vi.fn<typeof fetch>();
 beforeEach(() => {
   session.resetSession();
   window.localStorage.clear();
-  window.localStorage.setItem("assistant_client_id", "client-panel");
   launchState.current = { platform: "web", payload: null };
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);

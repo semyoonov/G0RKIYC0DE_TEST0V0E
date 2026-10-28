@@ -44,29 +44,61 @@ def auth_settings(**overrides: object) -> Settings:
         "link_code_ttl_seconds": 900,
         "web_public_url": "https://assistant.test",
         "timezone": "Europe/Moscow",
+        "email_code_secret": "test-email-secret",
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
 
 
+class FakeEmailSender:
+    configured = True
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def send_login_code(self, email: str, code: str) -> None:
+        self.sent.append((email, code))
+
+
 @pytest.fixture
 def auth(session_factory) -> AuthService:
-    return AuthService(session_factory, auth_settings())
+    return AuthService(session_factory, auth_settings(), email_sender=FakeEmailSender())
 
 
-async def test_web_session_keeps_client_id(auth: AuthService) -> None:
-    session = await auth.open_session(Platform.WEB, client_id="web-device-1")
+async def create_web_session(auth: AuthService, email: str):
+    await auth.request_email_code(email)
+    sender = auth._email_sender  # noqa: SLF001 - fake sender exposes the code for tests
+    code = sender.sent[-1][1]
+    return await auth.verify_email_code(email, code)
+
+
+async def test_web_session_requires_email_verification(auth: AuthService) -> None:
+    from app.services.auth.launch import LaunchError
+
+    with pytest.raises(LaunchError):
+        await auth.open_session(Platform.WEB)
+
+
+async def test_web_email_code_creates_a_verified_session(auth: AuthService) -> None:
+    session = await create_web_session(auth, "Person@Example.com")
 
     assert session.identity.platform is Platform.WEB
-    assert session.identity.external_id == "web-device-1"
+    assert session.identity.external_id.startswith("email-")
     restored = await auth.account(session.token)
     assert restored.user_id == session.user_id
 
 
-async def test_web_session_generates_client_id_when_missing(auth: AuthService) -> None:
-    session = await auth.open_session(Platform.WEB)
+async def test_email_login_links_a_bot_account_and_preserves_its_id(auth: AuthService) -> None:
+    telegram = await auth.open_session(Platform.TELEGRAM, telegram_init_data())
+    identity = Identity(Platform.TELEGRAM, "42")
+    await auth.request_email_code("same@example.com", identity)
+    sender = auth._email_sender  # noqa: SLF001 - fake sender exposes the code for tests
+    email_session = await auth.verify_email_code("same@example.com", sender.sent[-1][1], identity)
 
-    assert session.identity.external_id.startswith("web-")
+    browser_session = await create_web_session(auth, "same@example.com")
+
+    assert email_session.user_id == telegram.user_id
+    assert browser_session.user_id == telegram.user_id
 
 
 async def test_telegram_session_uses_platform_identity(auth: AuthService) -> None:
@@ -119,7 +151,7 @@ async def test_vk_profile_lookup_without_a_token_skips_the_network() -> None:
 
 
 async def test_start_param_links_web_account_to_telegram(auth: AuthService, session_factory) -> None:
-    web_session = await auth.open_session(Platform.WEB, client_id="web-before-link")
+    web_session = await create_web_session(auth, "before-link@example.com")
     async with session_factory() as session:
         session.add(
             Event(
@@ -132,7 +164,7 @@ async def test_start_param_links_web_account_to_telegram(auth: AuthService, sess
         )
         await session.commit()
 
-    issued = await auth.issue_link_code(Identity(Platform.WEB, "web-before-link"))
+    issued = await auth.issue_link_code(web_session.identity)
 
     telegram_session = await auth.open_session(
         Platform.TELEGRAM,
@@ -155,7 +187,7 @@ async def test_start_param_links_web_account_to_telegram(auth: AuthService, sess
 async def test_redeem_moves_history_to_the_bot_account(auth: AuthService, session_factory) -> None:
     telegram_session = await auth.open_session(Platform.TELEGRAM, telegram_init_data())
     issued = await auth.issue_link_code(Identity(Platform.TELEGRAM, "42"))
-    web_session = await auth.open_session(Platform.WEB, client_id="web-guest")
+    web_session = await create_web_session(auth, "web-guest@example.com")
     async with session_factory() as session:
         session.add(
             Event(
@@ -168,7 +200,7 @@ async def test_redeem_moves_history_to_the_bot_account(auth: AuthService, sessio
         )
         await session.commit()
 
-    linked = await auth.redeem(Identity(Platform.WEB, "web-guest"), issued["code"])
+    linked = await auth.redeem(web_session.identity, issued["code"])
 
     assert linked.user_id == telegram_session.user_id
     async with session_factory() as session:
@@ -184,12 +216,12 @@ async def test_linked_identity_resolves_through_the_user_repository(
 ) -> None:
     owner = await auth.open_session(Platform.TELEGRAM, telegram_init_data())
     issued = await auth.issue_link_code(Identity(Platform.TELEGRAM, "42"))
-    guest = await auth.open_session(Platform.WEB, client_id="web-linked")
-    await auth.redeem(Identity(Platform.WEB, "web-linked"), issued["code"])
+    guest = await create_web_session(auth, "web-linked@example.com")
+    await auth.redeem(guest.identity, issued["code"])
 
     async with session_factory() as session:
         repository = UserRepository(session)
-        resolved = await repository.get_or_create(Platform.WEB, "web-linked")
+        resolved = await repository.get_or_create(Platform.WEB, guest.identity.external_id)
         stranger = await repository.get_or_create(Platform.WEB, "web-unlinked")
 
     assert resolved.id == owner.user_id

@@ -82,7 +82,13 @@ unzip -q /tmp/vosk.zip -d models/
   укажите `SBER_CA_BUNDLE=/путь/к/сертификату.pem`. `GIGACHAT_VERIFY_SSL=false` — только для отладки.
 * Миграции: `alembic upgrade head` (или `AUTO_CREATE_TABLES=true` для локального запуска).
 
-### 4. Полный стек (PostgreSQL + Redis + приложение)
+### 4. Авторизация по email (новое)
+
+В обычном браузере чат доступен только после подтверждения email одноразовым кодом. Для отправки писем настройте `RESEND_API_KEY`, `EMAIL_FROM` (адрес на подтверждённом домене Resend) и отдельный случайный `EMAIL_CODE_SECRET` в `.env`. Подробная инструкция с командами и описанием изменённых файлов находится в [`EMAIL_AUTH_IMPLEMENTATION_RU.md`](EMAIL_AUTH_IMPLEMENTATION_RU.md).
+
+Чтобы привязать Telegram, VK или MAX к аккаунту с тем же email, напишите боту `/email адрес@example.com`, а затем отправьте код из письма командой `/emailcode адрес@example.com 123456`.
+
+### 5. Полный стек (PostgreSQL + Redis + приложение)
 
 ```bash
 cp .env.example .env   # заполните токены ботов и API
@@ -93,7 +99,7 @@ docker compose up --build
 Образ собирается в два этапа: Node-стадия выполняет `pnpm build`, готовая SPA попадает
 в `frontend/dist` внутри контейнера.
 
-### 5. Тесты
+### 6. Тесты
 
 ```bash
 pip install -r requirements-dev.txt

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchMeta, reportTelemetry, warmupChat } from "./lib/api";
 import { ChatMessage } from "./components/ChatMessage";
+import { AuthPanel } from "./components/AuthPanel";
 import { Composer } from "./components/Composer";
 import { LinkPanel } from "./components/LinkPanel";
 import { LiveTranscript } from "./components/LiveTranscript";
@@ -45,7 +46,7 @@ export default function App() {
   const [voiceName, setVoiceName] = useState(readVoice);
   const session = useSession();
   const chat = useChat();
-  const voice = useVoiceStream(chat.clientId);
+  const voice = useVoiceStream();
   const expectedAudioEntryId = useRef<string | null>(null);
   const speechAbortRef = useRef<AbortController | null>(null);
   const conversationPhaseRef = useRef<ConversationPhase>("idle");
@@ -200,6 +201,17 @@ export default function App() {
           ? ""
           : chat.status || conversation.hint;
   const composerDisabled = chat.pending || voice.busy;
+
+  if (session.status === "idle" || session.status === "loading") {
+    return (
+      <div className="flex min-h-full items-center justify-center text-sm text-ink-muted" role="status">
+        Проверяем сессию…
+      </div>
+    );
+  }
+  if (session.status !== "ready") {
+    return <AuthPanel initialError={session.status === "error" ? session.error : null} />;
+  }
 
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col border-x border-line/60">

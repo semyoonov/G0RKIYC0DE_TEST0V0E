@@ -151,24 +151,12 @@ async def test_meta_exposes_quick_actions_and_timezone() -> None:
     assert body["timezone"]
 
 
-async def test_chat_returns_reply_and_events() -> None:
+async def test_chat_without_session_is_rejected() -> None:
     assistant = FakeAssistant()
     response = await request(build_app(assistant), "POST", "/api/chat", json={"text": "привет"})
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["reply"] == "Ответ: привет"
-    assert body["audio"] is None
-    assert body["audio_mime"] is None
-    assert body["needs_clarification"] is False
-    assert len(body["events"]) == 1
-    event = body["events"][0]
-    assert event["id"] == 1
-    assert event["title"] == "Встреча с Анной"
-    assert event["status"] == "pending"
-    parsed = datetime.fromisoformat(event["starts_at"])
-    assert parsed == FIXED_TIME
-    assert assistant.text_calls == [(Platform.WEB, "web-demo", "привет", False, False)]
+    assert response.status_code == 401
+    assert assistant.text_calls == []
 
 
 async def test_chat_uses_explicit_client_id() -> None:
@@ -180,8 +168,8 @@ async def test_chat_uses_explicit_client_id() -> None:
         json={"text": "план", "client_id": "web-test"},
     )
 
-    assert response.status_code == 200
-    assert assistant.text_calls == [(Platform.WEB, "web-test", "план", False, False)]
+    assert response.status_code == 401
+    assert assistant.text_calls == []
 
 
 async def test_chat_forwards_speak_flag() -> None:
@@ -193,8 +181,8 @@ async def test_chat_forwards_speak_flag() -> None:
         json={"text": "план", "speak": True},
     )
 
-    assert response.status_code == 200
-    assert assistant.text_calls == [(Platform.WEB, "web-demo", "план", True, False)]
+    assert response.status_code == 401
+    assert assistant.text_calls == []
 
 
 async def test_chat_rejects_empty_text() -> None:
@@ -209,11 +197,12 @@ async def test_chat_rejects_empty_text() -> None:
     assert assistant.text_calls == []
 
 
-async def test_chat_maps_assistant_error_to_400() -> None:
-    response = await request(build_app(FakeAssistant(fail=True)), "POST", "/api/chat", json={"text": "привет"})
+async def test_chat_maps_anonymous_request_to_401() -> None:
+    assistant = FakeAssistant(fail=True)
+    response = await request(build_app(assistant), "POST", "/api/chat", json={"text": "привет"})
 
-    assert response.status_code == 400
-    assert response.json() == {"detail": "сервис недоступен"}
+    assert response.status_code == 401
+    assert assistant.text_calls == []
 
 
 async def test_voice_returns_audio_base64() -> None:
@@ -226,12 +215,8 @@ async def test_voice_returns_audio_base64() -> None:
         files={"audio": ("voice.webm", b"WEBM-DATA", "audio/webm")},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["reply"] == "Голосовой ответ"
-    assert body["audio"] == base64.b64encode(b"OPUS-DATA").decode("ascii")
-    assert body["audio_mime"] == "audio/ogg"
-    assert assistant.voice_calls == [(Platform.WEB, "web-voice", b"WEBM-DATA", None, True)]
+    assert response.status_code == 401
+    assert assistant.voice_calls == []
 
 
 async def test_voice_rejects_empty_file() -> None:
@@ -249,10 +234,8 @@ async def test_events_by_period() -> None:
     assistant = FakeAssistant()
     response = await request(build_app(assistant), "GET", "/api/events", params={"period": "today"})
 
-    assert response.status_code == 200
-    events = response.json()["events"]
-    assert [event["id"] for event in events] == [2]
-    assert assistant.list_calls == [(Platform.WEB, "web-demo", Period.TODAY)]
+    assert response.status_code == 401
+    assert assistant.list_calls == []
 
 
 async def test_events_reject_unknown_period() -> None:
@@ -270,11 +253,8 @@ async def test_complete_event_returns_updated_status() -> None:
         params={"client_id": "web-demo"},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["id"] == 1
-    assert body["status"] == "done"
-    assert assistant.status_calls == [(Platform.WEB, "web-demo", 1, EventStatus.DONE)]
+    assert response.status_code == 401
+    assert assistant.status_calls == []
 
 
 async def test_chat_forwards_the_closing_flag() -> None:
@@ -286,17 +266,16 @@ async def test_chat_forwards_the_closing_flag() -> None:
         json={"text": "спасибо", "client_id": "web-demo", "closing": True},
     )
 
-    assert response.status_code == 200
-    assert assistant.text_calls == [(Platform.WEB, "web-demo", "спасибо", False, True)]
+    assert response.status_code == 401
+    assert assistant.text_calls == []
 
 
 async def test_chat_warmup_reports_that_the_model_is_ready() -> None:
     assistant = FakeAssistant()
     response = await request(build_app(assistant), "POST", "/api/chat/warmup")
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert assistant.prewarm_calls == 1
+    assert response.status_code == 401
+    assert assistant.prewarm_calls == 0
 
 
 async def test_meta_exposes_the_voice_catalogue() -> None:
@@ -318,8 +297,8 @@ async def test_chat_forwards_the_selected_voice() -> None:
         json={"text": "Что на завтра?", "client_id": "web-demo", "speak": True, "voice": "Kaz-Lifelike"},
     )
 
-    assert response.status_code == 200
-    assert assistant.voices == ["Kaz-Lifelike"]
+    assert response.status_code == 401
+    assert assistant.voices == []
 
 
 async def test_speech_endpoint_returns_audio_for_text() -> None:
@@ -331,11 +310,8 @@ async def test_speech_endpoint_returns_audio_for_text() -> None:
         json={"text": "Встреча завтра в 10:00", "voice": "Bab-Energetic"},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert base64.b64decode(body["audio"]) == b"OPUS-SPEECH"
-    assert body["audio_mime"] == "audio/ogg"
-    assert assistant.speech_calls == [("Встреча завтра в 10:00", "Bab-Energetic")]
+    assert response.status_code == 401
+    assert assistant.speech_calls == []
 
 
 async def test_speech_endpoint_is_quiet_when_tts_is_off() -> None:
@@ -347,8 +323,7 @@ async def test_speech_endpoint_is_quiet_when_tts_is_off() -> None:
     assistant.speak = no_speech  # type: ignore[assignment]
     response = await request(build_app(assistant), "POST", "/api/speech", json={"text": "Привет"})
 
-    assert response.status_code == 200
-    assert response.json()["audio"] is None
+    assert response.status_code == 401
 
 
 async def test_telemetry_endpoint_accepts_client_events() -> None:

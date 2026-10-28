@@ -1,17 +1,22 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.exceptions import TranscriptionError
 from app.core.logger import get_logger
+from app.services.auth.tokens import SessionTokenError
+
+if TYPE_CHECKING:
+    from app.services.auth.service import AuthService
 
 log = get_logger(__name__)
 
-MAX_CLIENT_ID_LENGTH = 128
 MAX_FRAME_BYTES = 256 * 1024
 CLOSE_DISABLED = 1013
 CLOSE_POLICY = 1008
@@ -32,6 +37,7 @@ StreamingFactory = Callable[[], Awaitable[StreamingSession]]
 
 def build_voice_stream_router(
     streaming_factory: StreamingFactory | None,
+    auth: AuthService | None = None,
     max_streams: int = 4,
 ) -> APIRouter:
     router = APIRouter()
@@ -45,11 +51,26 @@ def build_voice_stream_router(
         if streaming_factory is None:
             await websocket.close(code=CLOSE_DISABLED)
             return
-
-        client_id = websocket.query_params.get("client_id", "web-demo")
-        if not 1 <= len(client_id) <= MAX_CLIENT_ID_LENGTH:
+        if auth is None:
             await websocket.close(code=CLOSE_POLICY)
             return
+
+        # The browser sends its signed session token as the first WebSocket message.
+        # Do not start recording or allocate a recognizer before validating it.
+        try:
+            raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+        except (TimeoutError, WebSocketDisconnect):
+            await websocket.close(code=CLOSE_POLICY)
+            return
+        auth_message = _parse_control(raw_auth)
+        token = auth_message.get("token") if auth_message and auth_message.get("type") == "auth" else None
+        try:
+            account = await auth.account(token if isinstance(token, str) else None)
+        except (SessionTokenError, ValueError):
+            await websocket.close(code=CLOSE_POLICY)
+            return
+        client_id = account.identity.external_id
+
         if active_streams >= limit:
             await websocket.close(code=CLOSE_DISABLED)
             return
