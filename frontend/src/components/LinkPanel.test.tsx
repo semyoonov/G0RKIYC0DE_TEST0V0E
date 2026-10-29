@@ -157,6 +157,7 @@ describe("LinkPanel", () => {
 
   it("shows a readable error when the session cannot start", async () => {
     const user = userEvent.setup();
+    window.localStorage.setItem("assistant_session_token", "stored-token");
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     await session.bootstrapSession();

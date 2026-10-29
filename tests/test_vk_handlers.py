@@ -234,3 +234,28 @@ async def test_callback_completes_the_event() -> None:
 )
 def test_event_id_payload_parsing(payload: Any, expected: int | None) -> None:
     assert _event_id_from_payload(payload) == expected
+
+
+async def test_start_command_with_link_code_redeems_and_confirms() -> None:
+    api, assistant = FakeApi(), FakeAssistant()
+
+    class FakeAuth:
+        def __init__(self) -> None:
+            self.redeemed: list[tuple[Any, str]] = []
+
+        async def redeem(self, identity: Any, code: str) -> None:
+            self.redeemed.append((identity, code))
+
+    fake_auth = FakeAuth()
+    await handle_message(
+        make_message("/start LINK_VK_XYZ"),
+        api,
+        assistant,
+        make_settings(),
+        fake_auth,  # type: ignore[arg-type]
+    )
+
+    assert len(fake_auth.redeemed) == 1
+    assert fake_auth.redeemed[0][1] == "LINK_VK_XYZ"
+    assert "привязан" in api.log[0]["message"]
+

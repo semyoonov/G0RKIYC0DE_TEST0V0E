@@ -11,18 +11,31 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
     {
         "name": "create_task",
         "description": (
-            "Создать задачу или напоминание пользователя. "
-            "Используй для просьб вроде «напомни завтра в 10 позвонить Ивану», «купи билеты»."
+            "Создать конкретную задачу или напоминание пользователя. "
+            "Используй ТОЛЬКО когда пользователь назвал конкретное содержание (что сделать или о чём напомнить). "
+            "Если содержание не названо (например, «поставь напоминание на 14:00», «напомни завтра»), "
+            "НЕ вызывай инструмент, а спроси: «О чём тебе напомнить?»."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "title": {
                     "type": "string",
-                    "description": "Содержание задачи в инфинитиве, без даты и времени: «позвонить Ивану».",
+                    "description": (
+                        "Конкретное содержание задачи или напоминания в инфинитиве («позвонить Ивану», «купить билеты»). "
+                        "Запрещено передавать общие слова («напоминание», «напомнить», «задача», «без названия»)."
+                    ),
                 },
                 "starts_at": {"type": "string", "description": f"Срок выполнения. {_DATETIME_HINT}"},
                 "remind_at": {"type": "string", "description": f"Время, когда напомнить. {_DATETIME_HINT}"},
+                "rrule": {
+                    "type": "string",
+                    "description": (
+                        "Правило повторения в формате iCalendar RRULE (RFC 5545), если названа периодичность. "
+                        "Примеры: 'FREQ=WEEKLY;BYDAY=TU' (каждый вторник), 'FREQ=DAILY' (каждый день), "
+                        "'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' (по будням), 'FREQ=WEEKLY' (каждую неделю), 'FREQ=MONTHLY' (каждый месяц)."
+                    ),
+                },
                 "description": {"type": "string", "description": "Дополнительные детали, если пользователь их назвал."},
                 "is_reminder": {
                     "type": "boolean",
@@ -41,6 +54,14 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
                 "title": {"type": "string", "description": "С кем или о чём встреча: «с командой», «с дизайнером». Запрещено подставлять общее слово «Встреча» — если название не названо, спроси пользователя, как назвать встречу."},
                 "starts_at": {"type": "string", "description": f"Начало встречи. {_DATETIME_HINT}"},
                 "duration_minutes": {"type": "integer", "description": "Длительность в минутах, если названа."},
+                "rrule": {
+                    "type": "string",
+                    "description": (
+                        "Правило повторения в формате iCalendar RRULE (RFC 5545), если названа периодичность. "
+                        "Примеры: 'FREQ=WEEKLY;BYDAY=TU' (каждый вторник), 'FREQ=DAILY' (каждый день), "
+                        "'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' (по будням)."
+                    ),
+                },
                 "description": {"type": "string", "description": "Дополнительные детали."},
             },
             "required": ["title", "starts_at"],
@@ -78,38 +99,41 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "name": "update_event",
-        "description": "Изменить название, время или описание существующей записи.",
+        "description": "Изменить название, время или описание существующей записи по id или названию.",
         "parameters": {
             "type": "object",
             "properties": {
                 "event_id": {"type": "integer", "description": "Идентификатор записи из list_events или search_events."},
+                "query": {"type": "string", "description": "Текущее название или ключевые слова записи, если id неизвестен."},
                 "title": {"type": "string", "description": "Новое название."},
                 "starts_at": {"type": "string", "description": f"Новое время. {_DATETIME_HINT}"},
                 "remind_at": {"type": "string", "description": f"Новое время напоминания. {_DATETIME_HINT}"},
+                "rrule": {"type": "string", "description": "Новое правило повторения RRULE или null для отмены повторения."},
                 "description": {"type": "string", "description": "Новое описание."},
             },
-            "required": ["event_id"],
         },
     },
     {
         "name": "complete_event",
-        "description": "Отметить задачу выполненной или вернуть её в работу.",
+        "description": "Отметить задачу выполненной или вернуть её в работу по id или названию.",
         "parameters": {
             "type": "object",
             "properties": {
-                "event_id": {"type": "integer", "description": "Идентификатор записи."},
+                "event_id": {"type": "integer", "description": "Идентификатор записи, если известен."},
+                "query": {"type": "string", "description": "Суть названия записи для выполнения («поесть», «купить молоко»), если id неизвестен."},
                 "done": {"type": "boolean", "description": "true — выполнено, false — вернуть в работу."},
             },
-            "required": ["event_id"],
         },
     },
     {
         "name": "delete_event",
-        "description": "Удалить запись пользователя.",
+        "description": "Удалить запись пользователя по идентификатору или названию/запросу.",
         "parameters": {
             "type": "object",
-            "properties": {"event_id": {"type": "integer", "description": "Идентификатор записи."}},
-            "required": ["event_id"],
+            "properties": {
+                "event_id": {"type": "integer", "description": "Идентификатор записи, если известен."},
+                "query": {"type": "string", "description": "Суть названия записи для удаления («поесть», «созвон с Васей»), если id неизвестен."},
+            },
         },
     },
 ]

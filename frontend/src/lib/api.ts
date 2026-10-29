@@ -309,6 +309,23 @@ export async function completeEvent(eventId: number): Promise<AssistantEvent> {
   );
 }
 
+export async function downloadCalendarIcs(): Promise<void> {
+  const token = readSessionToken();
+  const response = await fetch("/api/calendar/export.ics", withAuthorization({}, token));
+  if (!response.ok) {
+    throw new ApiError("Не удалось экспортировать календарь", response.status);
+  }
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "gorkycode_calendar.ics";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof TypeError && /fetch|network/i.test(error.message)) return NETWORK_ERROR_TEXT;

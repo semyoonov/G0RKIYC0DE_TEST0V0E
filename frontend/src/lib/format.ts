@@ -59,3 +59,31 @@ export function formatEventTime(value: string | null, timeZone: string, now: Dat
   }).format(date);
   return `${day} в ${time}`;
 }
+
+const RRULE_RU_MAP: Record<string, string> = {
+  "FREQ=WEEKLY;BYDAY=MO": "каждый понедельник",
+  "FREQ=WEEKLY;BYDAY=TU": "каждый вторник",
+  "FREQ=WEEKLY;BYDAY=WE": "каждую среду",
+  "FREQ=WEEKLY;BYDAY=TH": "каждый четверг",
+  "FREQ=WEEKLY;BYDAY=FR": "каждую пятницу",
+  "FREQ=WEEKLY;BYDAY=SA": "каждую субботу",
+  "FREQ=WEEKLY;BYDAY=SU": "каждое воскресенье",
+  "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR": "по будням",
+  "FREQ=WEEKLY;BYDAY=SA,SU": "по выходным",
+  "FREQ=DAILY": "каждый день",
+  "FREQ=WEEKLY": "каждую неделю",
+  "FREQ=MONTHLY": "каждый месяц",
+};
+
+export function formatRRule(rrule: string | null | undefined): string {
+  if (!rrule) return "";
+  const clean = rrule.trim().toUpperCase().replace(/^RRULE:/, "");
+  if (RRULE_RU_MAP[clean]) {
+    return RRULE_RU_MAP[clean];
+  }
+  if (clean.includes("FREQ=DAILY")) return "каждый день";
+  if (clean.includes("FREQ=WEEKLY")) return "еженедельно";
+  if (clean.includes("FREQ=MONTHLY")) return "ежемесячно";
+  return clean;
+}
+

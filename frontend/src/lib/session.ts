@@ -82,7 +82,9 @@ async function loginFresh(): Promise<AuthSession | null> {
   patch({ status: "loading", error: null });
   try {
     const session = await openSession(launch.platform, launch.payload);
-    return applySession(session);
+    applySession(session);
+    await maybeRedeemLinkCode();
+    return state.session;
   } catch (error) {
     fail(error, { platform: launch.platform, reason: errorMessage(error) });
     return null;
@@ -93,7 +95,8 @@ async function maybeRedeemLinkCode(): Promise<void> {
   const code = readLinkParam();
   if (!code || !readSessionToken()) return;
   try {
-    await linkWithCode(code);
+    const updated = await linkWithCode(code);
+    applySession(updated);
   } catch {
     // A link code may be expired or unrelated; normal email login still succeeds.
   }
@@ -184,6 +187,7 @@ export async function requestEmailCode(email: string): Promise<boolean> {
   const response = await requestEmailCodeApi(email.trim());
   if (response?.demo_session) {
     applySession(response.demo_session);
+    await maybeRedeemLinkCode();
     return true;
   }
   return false;

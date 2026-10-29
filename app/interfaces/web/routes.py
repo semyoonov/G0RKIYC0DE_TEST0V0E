@@ -231,4 +231,21 @@ def build_router(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _serialize_event(event)
 
+    @router.get("/api/calendar/export.ics")
+    async def export_calendar(request: Request) -> Response:
+        platform, external_id = await _conversation_owner(request, auth)
+        try:
+            ics_bytes = await assistant.export_calendar_ics(platform, external_id)
+        except AssistantError as exc:
+            log.exception("calendar export failed")
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return Response(
+            content=ics_bytes,
+            media_type="text/calendar; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="gorkycode_calendar.ics"',
+                "Cache-Control": "no-cache",
+            },
+        )
+
     return router

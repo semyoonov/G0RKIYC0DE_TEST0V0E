@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Bell, Calendar, Check, CheckSquare, Clock } from "lucide-react";
+import { Bell, Calendar, Check, CheckSquare, Clock, Repeat } from "lucide-react";
 
-import { EVENT_STATUS_LABELS, EVENT_TYPE_LABELS, formatEventTime } from "../lib/format";
+import { EVENT_STATUS_LABELS, EVENT_TYPE_LABELS, formatEventTime, formatRRule } from "../lib/format";
 import type { AssistantEvent, EventType } from "../types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -93,14 +93,20 @@ export function EventCard({ event, timezone, onComplete }: EventCardProps) {
 
       <div>
         <footer className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-line/40 pt-2.5">
-          {time ? (
-            <div className="inline-flex items-center gap-1.5 rounded-md border border-line/40 bg-raised/50 px-2 py-1 font-mono text-xs text-ink-muted">
-              <Clock className="size-3.5 shrink-0 text-ink-dim" aria-hidden="true" />
-              <span>{time}</span>
-            </div>
-          ) : (
-            <div />
-          )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {time ? (
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-line/40 bg-raised/50 px-2 py-1 font-mono text-xs text-ink-muted">
+                <Clock className="size-3.5 shrink-0 text-ink-dim" aria-hidden="true" />
+                <span>{time}</span>
+              </div>
+            ) : null}
+            {event.rrule ? (
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-accent/30 bg-accent/10 px-2 py-1 font-sans text-xs text-accent">
+                <Repeat className="size-3 shrink-0" aria-hidden="true" />
+                <span>{formatRRule(event.rrule)}</span>
+              </div>
+            ) : null}
+          </div>
 
           {isPending ? (
             <Button

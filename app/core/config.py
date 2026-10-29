@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     gigachat_scope: str = "GIGACHAT_API_PERS"
     gigachat_auth_url: str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
     gigachat_base_url: str = "https://gigachat.devices.sberbank.ru/api/v1"
-    gigachat_model: str = "GigaChat"
+    gigachat_model: str = "GigaChat-Pro"
     gigachat_temperature: float = 0.1
     gigachat_max_tokens: int = 1024
     gigachat_timeout_seconds: float = 60.0
@@ -187,10 +187,13 @@ class Settings(BaseSettings):
             return f"https://t.me/{username}{start}"
         if platform is Platform.MAX:
             username = self.max_bot_username.strip().lstrip("@")
-            startapp = f"?startapp={code}" if code else ""
+            startapp = f"?startapp={code}&start={code}" if code else ""
             return f"https://max.ru/{username}{startapp}" if username else None
         if platform is Platform.VK:
-            return f"https://vk.com/app{self.vk_mini_app_id}" if self.vk_mini_app_id else None
+            if not self.vk_mini_app_id:
+                return None
+            start = f"#startapp={code}" if code else ""
+            return f"https://vk.com/app{self.vk_mini_app_id}{start}"
         if platform is Platform.WEB:
             return f"{self.mini_app_base_url}/?link={code}" if code else f"{self.mini_app_base_url}/"
         return None

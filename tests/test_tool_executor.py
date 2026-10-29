@@ -53,6 +53,29 @@ async def test_create_task_stores_event_and_confirms(executor, session, user):
     assert stored.source is Platform.WEB
 
 
+async def test_create_task_requires_specific_title(executor):
+    result_none = await executor.execute("create_task", {})
+    assert result_none.failed
+    assert "как назвать" in result_none.content
+
+    result_generic = await executor.execute("create_task", {"title": "Задача"})
+    assert result_generic.failed
+    assert "как назвать" in result_generic.content
+
+
+async def test_create_reminder_requires_time_and_title(executor):
+    start = NOW + timedelta(days=1)
+    result_no_time = await executor.execute("create_task", {"title": "купить молоко", "is_reminder": True})
+    assert result_no_time.failed
+    assert "время" in result_no_time.content
+
+    result_generic = await executor.execute(
+        "create_task", {"title": "Напоминание", "starts_at": start.isoformat(), "is_reminder": True}
+    )
+    assert result_generic.failed
+    assert "как назвать" in result_generic.content
+
+
 async def test_create_meeting_requires_time(executor):
     result = await executor.execute("create_meeting", {"title": "с командой"})
 
@@ -166,3 +189,53 @@ async def test_confirmation_has_no_dangling_preposition(executor):
     result = await executor.execute("create_task", {"title": "отправить отчёт", "starts_at": start.isoformat()})
     assert " — завтра в " in result.content
     assert " на завтра" not in result.content
+
+
+async def test_delete_and_complete_by_query_without_id(executor, session, user):
+    created = await executor.execute(
+        "create_task",
+        {"title": "поесть", "rrule": "FREQ=WEEKLY;BYDAY=TU", "is_reminder": True, "starts_at": NOW.isoformat()},
+    )
+    assert not created.failed
+    event_id = created.events[0].id
+
+    # 1. Search with natural phrase
+    search_res = await executor.execute("search_events", {"query": "удали напоминание поесть каждый вторник"})
+    assert not search_res.failed
+    assert "поесть" in search_res.content
+
+    # 2. Complete by query
+    completed = await executor.execute("complete_event", {"query": "поесть"})
+    assert not completed.failed
+    assert "Отметил как выполнено" in completed.content
+
+    # 3. Delete by natural deletion query
+    deleted = await executor.execute("delete_event", {"query": "удали напоминание поесть каждый вторник"})
+    assert not deleted.failed
+    assert "Удалил" in deleted.content
+    assert "поесть" in deleted.content
+    assert await EventRepository(session).get_for_user(user.id, event_id) is None
+
+
+async def test_create_task_with_rrule_aligns_to_weekday(executor):
+    # Sunday November 1st 2026:
+    sunday = datetime(2026, 11, 1, 16, 0, tzinfo=MOSCOW)
+    assert sunday.weekday() == 6  # Sunday
+
+    created = await executor.execute(
+        "create_task",
+        {
+            "title": "поесть",
+            "starts_at": sunday.isoformat(),
+            "rrule": "FREQ=WEEKLY;BYDAY=TU",
+            "is_reminder": True,
+        },
+    )
+    assert not created.failed
+    ev = created.events[0]
+    # Should be aligned to Tuesday (weekday 1), Nov 3rd 2026!
+    assert ev.starts_at.weekday() == 1
+    assert ev.starts_at.day == 3
+    assert ev.starts_at.month == 11
+    assert ev.starts_at.year == 2026
+

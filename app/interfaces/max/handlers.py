@@ -9,6 +9,7 @@ from app.core.logger import get_logger
 from app.domain.enums import EventStatus, Platform
 from app.interfaces.linking import app_text, display_name_of, identity_for, link_code_text
 from app.interfaces.email_linking import confirm_email_link, request_email_link
+from app.services.auth.service import LinkCodeError
 from app.interfaces.cards import (
     action_label,
     cards_text,
@@ -38,6 +39,57 @@ HELP = (
 _AUDIO_ATTACHMENT_TYPES = {"audio", "voice"}
 
 
+def _clean_code(raw: str | None) -> str:
+    if not raw:
+        return ""
+    cleaned = raw.strip().lstrip("?#")
+    if "=" in cleaned:
+        for part in cleaned.split("&"):
+            k, _, v = part.partition("=")
+            if k in ("start", "startapp", "link", "code", "ref") and v.strip():
+                return v.strip()
+    return cleaned
+
+
+async def _handle_start_flow(
+    client: MaxClient,
+    user_id: int | str,
+    sender: dict[str, Any],
+    raw_code: str,
+    auth: AuthService | None,
+) -> None:
+    code = _clean_code(raw_code)
+    if code and auth is not None:
+        name = sender.get("name") or sender.get("first_name")
+        identity = identity_for(
+            Platform.MAX,
+            user_id,
+            display_name_of(name if isinstance(name, str) else None, sender.get("username")),
+        )
+        try:
+            await auth.redeem(identity, code)
+            log.info("MAX: redeemed link code %s for user %s", code, user_id)
+            await client.send_text(
+                user_id,
+                "✅ Аккаунт успешно привязан!\n"
+                "Теперь ваши задачи, встречи и напоминания синхронизированы между MAX и веб-версией.\n\n"
+                f"{GREETING}",
+            )
+            return
+        except LinkCodeError as exc:
+            await client.send_text(
+                user_id,
+                f"❌ Не удалось привязать аккаунт: {exc}.\n\n"
+                "Получите новый код в веб-приложении или используйте /link для создания кода.",
+            )
+            return
+        except Exception:
+            log.exception("MAX: link redeem failed for user %s", user_id)
+            await client.send_text(user_id, "❌ Не удалось привязать аккаунт, попробуйте ещё раз.")
+            return
+    await client.send_text(user_id, GREETING)
+
+
 async def handle_update(
     client: MaxClient,
     update: dict[str, Any],
@@ -50,6 +102,16 @@ async def handle_update(
     update_type = update.get("update_type")
     if update_type == "message_callback":
         await _handle_callback(client, update, assistant)
+        return
+    if update_type == "bot_started":
+        sender = update.get("user") or {}
+        user_id = sender.get("user_id") or update.get("chat_id")
+        if user_id is None:
+            log.warning("MAX bot_started update without user_id is skipped")
+            return
+        payload = update.get("payload")
+        raw_code = str(payload).strip() if payload is not None else ""
+        await _handle_start_flow(client, user_id, sender, raw_code, auth)
         return
     if update_type != "message_created":
         return
@@ -67,7 +129,9 @@ async def handle_update(
     if _find_audio(attachments) is None and text:
         command = text.split(maxsplit=1)[0].lower()
         if command == "/start":
-            await client.send_text(user_id, GREETING)
+            parts = text.split(maxsplit=1)
+            raw_code = parts[1].strip() if len(parts) > 1 else ""
+            await _handle_start_flow(client, user_id, sender, raw_code, auth)
             return
         if command == "/help":
             await client.send_text(user_id, HELP)
@@ -75,7 +139,10 @@ async def handle_update(
         if command == "/link" and auth is not None and settings is not None:
             await _send_link_code(client, user_id, sender, auth, settings)
             return
-        if command == "/email" and auth is not None:
+        if command == "/email":
+            if auth is None:
+                await client.send_text(user_id, "Привязка по email временно недоступна.")
+                return
             parts = text.split(maxsplit=1)
             if len(parts) != 2:
                 await client.send_text(user_id, "Использование: /email ваш-адрес@example.com")
@@ -87,7 +154,10 @@ async def handle_update(
             )
             await client.send_text(user_id, await request_email_link(auth, identity, parts[1]))
             return
-        if command == "/emailcode" and auth is not None:
+        if command == "/emailcode":
+            if auth is None:
+                await client.send_text(user_id, "Привязка по email временно недоступна.")
+                return
             parts = text.split()
             if len(parts) != 3:
                 await client.send_text(user_id, "Использование: /emailcode ваш-адрес@example.com 123456")

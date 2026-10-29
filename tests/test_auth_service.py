@@ -282,7 +282,72 @@ async def test_issue_code_reports_mini_app_links(auth: AuthService) -> None:
 
     assert issued["mini_apps"]["telegram"].startswith("https://t.me/hackathon_helperbot?start=")
     assert issued["mini_apps"]["max"].startswith("https://max.ru/helper_max?startapp=")
-    assert issued["mini_apps"]["vk"] == f"https://vk.com/app{VK_APP_ID}"
+    assert issued["mini_apps"]["vk"].startswith(f"https://vk.com/app{VK_APP_ID}#")
     assert issued["web_link"].startswith("https://assistant.test/?link=")
     assert issued["expires_in"] == 900
     assert int(time.time()) > 0
+
+
+async def test_start_param_links_web_account_to_vk(auth: AuthService, session_factory) -> None:
+    web_session = await create_web_session(auth, "vk-link-test@example.com")
+    async with session_factory() as session:
+        session.add(
+            Event(
+                user_id=web_session.user_id,
+                type=EventType.TASK,
+                title="Задача из веба для ВК",
+                status=EventStatus.PENDING,
+                source=Platform.WEB,
+            )
+        )
+        await session.commit()
+
+    issued = await auth.issue_link_code(web_session.identity)
+    code = issued["code"]
+
+    vk_session = await auth.open_session(
+        Platform.VK,
+        vk_launch_params(start_param=code, urlsafe=True),
+    )
+
+    assert vk_session.link_redeemed is True
+    assert vk_session.user_id == web_session.user_id
+    platforms = {identity.platform for identity in vk_session.linked}
+    assert {Platform.WEB, Platform.VK} <= platforms
+
+    async with session_factory() as session:
+        rows = (await session.execute(select(Event).where(Event.user_id == vk_session.user_id))).scalars()
+        assert [row.title for row in rows.all()] == ["Задача из веба для ВК"]
+
+
+async def test_start_param_links_web_account_to_max(auth: AuthService, session_factory) -> None:
+    web_session = await create_web_session(auth, "max-link-test@example.com")
+    async with session_factory() as session:
+        session.add(
+            Event(
+                user_id=web_session.user_id,
+                type=EventType.TASK,
+                title="Задача из веба для MAX",
+                status=EventStatus.PENDING,
+                source=Platform.WEB,
+            )
+        )
+        await session.commit()
+
+    issued = await auth.issue_link_code(web_session.identity)
+    code = issued["code"]
+
+    max_session = await auth.open_session(
+        Platform.MAX,
+        max_init_data(start_param=code),
+    )
+
+    assert max_session.link_redeemed is True
+    assert max_session.user_id == web_session.user_id
+    platforms = {identity.platform for identity in max_session.linked}
+    assert {Platform.WEB, Platform.MAX} <= platforms
+
+    async with session_factory() as session:
+        rows = (await session.execute(select(Event).where(Event.user_id == max_session.user_id))).scalars()
+        assert [row.title for row in rows.all()] == ["Задача из веба для MAX"]
+

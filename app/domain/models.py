@@ -31,6 +31,7 @@ class EventCreate(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     starts_at: datetime | None = None
     remind_at: datetime | None = None
+    rrule: str | None = Field(default=None, max_length=255)
     status: EventStatus = EventStatus.PENDING
     source: Platform | None = None
 
@@ -50,6 +51,7 @@ class EventUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     starts_at: datetime | None = None
     remind_at: datetime | None = None
+    rrule: str | None = Field(default=None, max_length=255)
     status: EventStatus | None = None
 
 
@@ -63,6 +65,7 @@ class EventRead(BaseModel):
     description: str | None = None
     starts_at: datetime | None = None
     remind_at: datetime | None = None
+    rrule: str | None = None
     status: EventStatus
     source: Platform | None = None
     created_at: datetime

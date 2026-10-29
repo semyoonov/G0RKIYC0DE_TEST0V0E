@@ -155,9 +155,11 @@ async def test_web_event_routes_require_a_verified_session(session_factory) -> N
 
     events = await request(app, "GET", "/api/events")
     completion = await request(app, "POST", "/api/events/1/complete")
+    export = await request(app, "GET", "/api/calendar/export.ics")
 
     assert events.status_code == 401
     assert completion.status_code == 401
+    assert export.status_code == 401
 
 
 async def test_invalid_launch_data_is_rejected(session_factory) -> None:

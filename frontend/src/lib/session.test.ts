@@ -167,6 +167,7 @@ describe("bootstrapSession", () => {
   });
 
   it("reports a readable error when the server is unreachable", async () => {
+    window.localStorage.setItem("assistant_session_token", "stored-token");
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     await expect(session.bootstrapSession()).resolves.toBeUndefined();

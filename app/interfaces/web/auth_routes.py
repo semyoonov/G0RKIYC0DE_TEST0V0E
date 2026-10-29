@@ -60,6 +60,8 @@ async def identity_from_request(request: Request, auth: AuthService | None) -> I
     if "identity" in getattr(request.state, "auth_cache", {}):
         return request.state.auth_cache["identity"]
     token = bearer_token(request.headers.get("authorization"))
+    if not token and "token" in request.query_params:
+        token = request.query_params["token"].strip() or None
     identity: Identity | None = None
     if token:
         try:
@@ -134,7 +136,7 @@ def build_auth_router(auth: AuthService) -> APIRouter:
             raise HTTPException(status_code=503, detail=NOT_CONFIGURED_TEXT) from error
         except LaunchError as error:
             log.warning("auth: %s launch rejected: %s", payload.platform.value, error)
-            raise HTTPException(status_code=401, detail=INVALID_LAUNCH_TEXT) from error
+            raise HTTPException(status_code=401, detail=f"{INVALID_LAUNCH_TEXT} ({error})") from error
         return session.as_dict(links=settings.mini_app_links())
 
     @router.get("/me")

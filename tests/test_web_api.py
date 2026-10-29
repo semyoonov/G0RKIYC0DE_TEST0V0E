@@ -105,6 +105,16 @@ class FakeAssistant:
         self.status_calls.append((platform, external_user_id, event_id, status))
         return make_event(event_id, status=status)
 
+    async def export_calendar_ics(
+        self,
+        platform: Platform,
+        external_user_id: str,
+        timezone_name: str | None = None,
+    ) -> bytes:
+        if self.fail:
+            raise AssistantError("сервис недоступен")
+        return b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//TEST\r\nEND:VCALENDAR\r\n"
+
 
 def build_app(assistant: FakeAssistant) -> Any:
     return create_app(assistant, Settings())
@@ -337,3 +347,11 @@ async def test_telemetry_endpoint_accepts_client_events() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+async def test_calendar_export_endpoint_requires_auth() -> None:
+    assistant = FakeAssistant()
+    response = await request(build_app(assistant), "GET", "/api/calendar/export.ics")
+    assert response.status_code == 401
+
+

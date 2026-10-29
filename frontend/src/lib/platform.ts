@@ -137,7 +137,16 @@ function readVkPairs(environment: LaunchEnvironment): Array<[string, string]> {
   const selected = new Map<string, string>();
   for (const raw of [environment.search, environment.hash]) {
     for (const [key, value] of readPairs(raw)) {
-      if (key === "sign" || key.startsWith("vk_")) selected.set(key, value);
+      if (
+        key === "sign" ||
+        key.startsWith("vk_") ||
+        key === "startapp" ||
+        key === "start_param" ||
+        key === "link" ||
+        key === "code"
+      ) {
+        selected.set(key, value);
+      }
     }
   }
   return Array.from(selected.entries());
@@ -150,12 +159,31 @@ function hasVkLaunch(environment: LaunchEnvironment): boolean {
 export function readLinkParam(environment: LaunchEnvironment = readLaunchEnvironment()): string | null {
   for (const raw of [environment.search, environment.hash]) {
     if (!raw) continue;
-    const text = raw.replace(/^[?#]/, "");
+    const text = raw.replace(/^[?#]/, "").trim();
     if (!text) continue;
     try {
       const params = new URLSearchParams(text);
-      const code = params.get("link") || params.get("code") || params.get("startapp") || params.get("start_param");
-      if (code && code.trim()) return code.trim();
+      const code =
+        params.get("link") ||
+        params.get("code") ||
+        params.get("startapp") ||
+        params.get("start_param") ||
+        params.get("vk_app_hash") ||
+        params.get("start");
+      if (code && code.trim()) {
+        const val = code.trim();
+        if (val.includes("=")) {
+          const sub = new URLSearchParams(val);
+          const subCode =
+            sub.get("link") ||
+            sub.get("code") ||
+            sub.get("startapp") ||
+            sub.get("start_param") ||
+            sub.get("start");
+          if (subCode && subCode.trim()) return subCode.trim();
+        }
+        return val;
+      }
     } catch {
       // ignore
     }
