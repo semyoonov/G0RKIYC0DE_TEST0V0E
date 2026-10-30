@@ -7,9 +7,8 @@ RUN npm config set fetch-retries 5 \
     && npm config set fetch-retry-maxtimeout 60000 \
     && (npm install -g pnpm@9 || npm install -g pnpm@9 --registry=https://registry.npmmirror.com)
 
-COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
-RUN pnpm config set fetch-retries 5 \
-    && (pnpm install --frozen-lockfile || pnpm install --frozen-lockfile --registry=https://registry.npmmirror.com || pnpm install --no-frozen-lockfile --registry=https://registry.npmmirror.com)
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml frontend/.npmrc ./
+RUN pnpm install --frozen-lockfile || pnpm install --frozen-lockfile --registry=https://registry.npmmirror.com || pnpm install --no-frozen-lockfile --registry=https://registry.npmmirror.com
 
 COPY frontend/ ./
 RUN pnpm build
