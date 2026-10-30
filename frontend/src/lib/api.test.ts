@@ -55,23 +55,22 @@ describe("postChat closing flag", () => {
   it("always asks for text without speech and omits closing when it is false", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(REPLY));
 
-    await postChat("Привет", "client-anon");
+    await postChat("Привет");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestAt(0).path).toBe("/api/chat");
     const body = requestBody(requestAt(0).init);
-    expect(body).toEqual({ text: "Привет", client_id: "client-anon", speak: false });
+    expect(body).toEqual({ text: "Привет", speak: false });
     expect("closing" in body).toBe(false);
   });
 
   it("sends closing true for a farewell", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(REPLY));
 
-    await postChat("Спасибо", "client-anon", { closing: true });
+    await postChat("Спасибо", { closing: true });
 
     expect(requestBody(requestAt(0).init)).toEqual({
       text: "Спасибо",
-      client_id: "client-anon",
       speak: false,
       closing: true,
     });
@@ -107,11 +106,11 @@ describe("warmupChat", () => {
 describe("postChat voice", () => {
   it("sends the chosen voice and omits it when empty", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(REPLY));
-    await postChat("Что на завтра?", "client-1", { voice: "Gli-Operator" });
+    await postChat("Что на завтра?", { voice: "Gli-Operator" });
     expect(requestBody(requestAt(0).init)).toMatchObject({ voice: "Gli-Operator" });
 
     fetchMock.mockResolvedValueOnce(jsonResponse(REPLY));
-    await postChat("Что на завтра?", "client-1", { voice: "" });
+    await postChat("Что на завтра?", { voice: "" });
     expect(requestBody(requestAt(1).init)).not.toHaveProperty("voice");
   });
 });

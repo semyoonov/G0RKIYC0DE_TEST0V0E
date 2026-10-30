@@ -9,7 +9,6 @@ import type {
 import type { ConversationPhase } from "./conversation";
 import { SpeechCache, speechCacheKey } from "./speechCache";
 
-const CLIENT_STORAGE_KEY = "assistant_client_id";
 export const SESSION_TOKEN_STORAGE_KEY = "assistant_session_token";
 export const NETWORK_ERROR_TEXT = "Не удалось связаться с сервером. Попробуйте позже.";
 
@@ -71,25 +70,6 @@ export function setSessionRecovery(handler: SessionRecovery | null): void {
   recoverSession = handler;
 }
 
-export function readClientId(): string {
-  try {
-    const stored = window.localStorage.getItem(CLIENT_STORAGE_KEY);
-    if (stored) return stored;
-  } catch {
-    // Private mode can block localStorage.
-  }
-  const generated =
-    typeof window.crypto?.randomUUID === "function"
-      ? window.crypto.randomUUID()
-      : `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  try {
-    window.localStorage.setItem(CLIENT_STORAGE_KEY, generated);
-  } catch {
-    // The identifier stays valid for the current page session.
-  }
-  return generated;
-}
-
 function withAuthorization(init: RequestInit, token: string | null = readSessionToken()): RequestInit {
   if (!token) return init;
   const headers = new Headers(init.headers);
@@ -133,13 +113,12 @@ export async function fetchMeta(): Promise<Meta> {
 export async function openSession(
   platform: SessionPlatform,
   payload: string | null,
-  clientId: string | null,
 ): Promise<AuthSession> {
   return readJson<AuthSession>(
     await fetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform, payload, client_id: clientId }),
+      body: JSON.stringify({ platform, payload }),
     }),
   );
 }
@@ -150,6 +129,28 @@ export async function fetchMe(token: string): Promise<AuthSession> {
       headers: { Authorization: `Bearer ${token}` },
     }),
   );
+}
+
+export interface EmailRequestResponse {
+  message: string;
+  /** Present only for the demo address: the visitor is signed in without a letter. */
+  demo_session?: AuthSession;
+}
+
+export async function requestEmailCode(email: string): Promise<EmailRequestResponse> {
+  return requestWithToken<EmailRequestResponse>("/api/auth/email/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function verifyEmailCode(email: string, code: string): Promise<AuthSession> {
+  return requestWithToken<AuthSession>("/api/auth/email/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, code }),
+  });
 }
 
 export async function requestAuthCode(): Promise<LinkCodeResponse> {
@@ -175,18 +176,15 @@ export interface ChatRequestOptions {
  */
 export async function postChat(
   text: string,
-  clientId: string,
   options: ChatRequestOptions = {},
 ): Promise<ChatReply> {
   const payload: {
     text: string;
-    client_id: string;
     speak: boolean;
     closing?: boolean;
     voice?: string;
   } = {
     text,
-    client_id: clientId,
     speak: false,
   };
   if (options.closing) payload.closing = true;
@@ -287,17 +285,16 @@ export async function warmupChat(): Promise<void> {
   }
 }
 
-export async function postVoice(blob: Blob, clientId: string, voice?: string): Promise<ChatReply> {
+export async function postVoice(blob: Blob, voice?: string): Promise<ChatReply> {
   const form = new FormData();
   const extension = blob.type.includes("ogg") ? "ogg" : "webm";
   form.append("audio", blob, `voice.${extension}`);
-  form.append("client_id", clientId);
   if (voice) form.append("voice", voice);
   return requestWithSession<ChatReply>("/api/voice", { method: "POST", body: form });
 }
 
-export async function fetchEvents(clientId: string, period = "today"): Promise<AssistantEvent[]> {
-  const query = new URLSearchParams({ client_id: clientId, period });
+export async function fetchEvents(period = "today"): Promise<AssistantEvent[]> {
+  const query = new URLSearchParams({ period });
   const payload = await requestWithSession<{ events: AssistantEvent[] }>(
     `/api/events?${query.toString()}`,
     {},
@@ -305,12 +302,28 @@ export async function fetchEvents(clientId: string, period = "today"): Promise<A
   return payload.events;
 }
 
-export async function completeEvent(eventId: number, clientId: string): Promise<AssistantEvent> {
-  const query = new URLSearchParams({ client_id: clientId });
+export async function completeEvent(eventId: number): Promise<AssistantEvent> {
   return requestWithSession<AssistantEvent>(
-    `/api/events/${encodeURIComponent(String(eventId))}/complete?${query.toString()}`,
+    `/api/events/${encodeURIComponent(String(eventId))}/complete`,
     { method: "POST" },
   );
+}
+
+export async function downloadCalendarIcs(): Promise<void> {
+  const token = readSessionToken();
+  const response = await fetch("/api/calendar/export.ics", withAuthorization({}, token));
+  if (!response.ok) {
+    throw new ApiError("Не удалось экспортировать календарь", response.status);
+  }
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "gorkycode_calendar.ics";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 export function errorMessage(error: unknown): string {

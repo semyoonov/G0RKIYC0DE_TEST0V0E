@@ -171,3 +171,30 @@ async def test_due_reminders_can_be_limited_by_platform(session, user):
     due = await repository.due_reminders(now=NOW, platforms=[Platform.TELEGRAM])
     assert [item.id for item in due] == [telegram_event.id]
     assert web_event.id not in {item.id for item in due}
+
+
+async def test_search_handles_intent_and_recurrence_phrasing(session, user):
+    repository = EventRepository(session)
+    event = await repository.create(
+        user.id,
+        EventCreate(
+            type=EventType.REMINDER,
+            title="поесть",
+            starts_at=NOW,
+            rrule="FREQ=WEEKLY;BYDAY=TU",
+            status=EventStatus.PENDING,
+        ),
+    )
+
+    found1 = await repository.search(user.id, "поесть каждый вторник")
+    assert len(found1) == 1
+    assert found1[0].id == event.id
+
+    found2 = await repository.search(user.id, "удали напоминание поесть каждый вторник")
+    assert len(found2) == 1
+    assert found2[0].id == event.id
+
+    found3 = await repository.search(user.id, "поесть")
+    assert len(found3) == 1
+    assert found3[0].id == event.id
+

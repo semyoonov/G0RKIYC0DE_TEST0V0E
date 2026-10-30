@@ -7,14 +7,14 @@ import json
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlencode
 
 from app.domain.enums import Platform
 from app.domain.identity import Identity
 
 WEBAPP_KEY = b"WebAppData"
 DEFAULT_MAX_AGE_SECONDS = 24 * 60 * 60
-_CLOCK_SKEW_SECONDS = 5 * 60
+_CLOCK_SKEW_SECONDS = 30 * 60
 
 
 class LaunchError(ValueError):
@@ -60,9 +60,12 @@ def data_check_string(params: dict[str, str], exclude: set[str]) -> str:
     return "\n".join(f"{key}={params[key]}" for key in sorted(params) if key not in exclude)
 
 
-def _vk_check_string(params: dict[str, str]) -> str:
+def _vk_check_strings(params: dict[str, str]) -> list[str]:
     keys = sorted(key for key in params if key.startswith("vk_") and key != "sign")
-    return "&".join(f"{key}={params[key]}" for key in keys)
+    return [
+        urlencode([(key, params[key]) for key in keys]),
+        "&".join(f"{key}={params[key]}" for key in keys),
+    ]
 
 
 def _json_object(value: str | None) -> dict[str, Any]:
@@ -87,10 +90,25 @@ def _display_name(user: dict[str, Any]) -> str | None:
 
 
 def _start_param(params: dict[str, str]) -> str | None:
-    for key in ("start_param", "startParam", "startapp", "start_app"):
+    for key in (
+        "start_param",
+        "startParam",
+        "startapp",
+        "start_app",
+        "vk_app_hash",
+        "link",
+        "code",
+        "ref",
+    ):
         value = params.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            cleaned = value.strip().lstrip("#?")
+            if "=" in cleaned:
+                for part in cleaned.split("&"):
+                    k, _, v = part.partition("=")
+                    if k in ("link", "code", "startapp", "start_param", "start", "ref") and v.strip():
+                        return v.strip()
+            return cleaned
     return None
 
 
@@ -199,9 +217,22 @@ def vk_identity(
     provided = params.get("sign", "").strip()
     if not provided:
         raise LaunchError("vk sign is missing")
-    signature = _hmac_sha256(app_secret.strip().encode("utf-8"), _vk_check_string(params).encode("utf-8"))
-    expected = base64.b64encode(signature).decode("ascii")
-    if not hmac.compare_digest(expected, provided):
+    secret_bytes = app_secret.strip().encode("utf-8")
+    p_norm = provided.replace(" ", "+").replace("+", "-").replace("/", "_").rstrip("=")
+    verified = False
+    for check_str in _vk_check_strings(params):
+        sig = _hmac_sha256(secret_bytes, check_str.encode("utf-8"))
+        url_unpadded = base64.urlsafe_b64encode(sig).rstrip(b"=").decode("ascii")
+        std_padded = base64.b64encode(sig).decode("ascii")
+        if (
+            hmac.compare_digest(url_unpadded, p_norm)
+            or hmac.compare_digest(std_padded, provided)
+            or hmac.compare_digest(std_padded, provided.replace(" ", "+"))
+            or hmac.compare_digest(url_unpadded, provided)
+        ):
+            verified = True
+            break
+    if not verified:
         raise LaunchError("vk signature mismatch")
     if app_id and params.get("vk_app_id") and params["vk_app_id"] != str(app_id):
         raise LaunchError("vk app id mismatch")

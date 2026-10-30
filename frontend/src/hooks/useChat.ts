@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   completeEvent,
@@ -6,7 +6,6 @@ import {
   postChat,
   postSpeech,
   postVoice,
-  readClientId,
 } from "../lib/api";
 import type { ChatEntry, ChatReply } from "../types";
 
@@ -31,7 +30,6 @@ export interface SendTextOptions {
 }
 
 export interface ChatController {
-  clientId: string;
   entries: ChatEntry[];
   pending: boolean;
   status: string;
@@ -51,7 +49,6 @@ function isAbort(error: unknown, signal?: AbortSignal): boolean {
 }
 
 export function useChat(): ChatController {
-  const clientId = useMemo(readClientId, []);
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState("");
@@ -87,7 +84,7 @@ export function useChat(): ChatController {
       setStatus("Обрабатываю…");
       try {
         // The answer is requested without speech so its text renders at once.
-        const reply = await postChat(text, clientId, {
+        const reply = await postChat(text, {
           closing: options.closing ?? false,
           voice: options.voice ?? "",
         });
@@ -124,7 +121,7 @@ export function useChat(): ChatController {
         setStatus("");
       }
     },
-    [append, attachAudio, clientId, nextId, pending],
+    [append, attachAudio, nextId, pending],
   );
 
   const sendVoice = useCallback(
@@ -134,7 +131,7 @@ export function useChat(): ChatController {
       setPending(true);
       setStatus("Распознаю…");
       try {
-        const reply = await postVoice(blob, clientId, options?.voice);
+        const reply = await postVoice(blob, options?.voice);
         append({ id: nextId(), role: "assistant", reply });
       } catch (error) {
         append({ id: nextId(), role: "error", text: errorMessage(error) });
@@ -143,12 +140,12 @@ export function useChat(): ChatController {
         setStatus("");
       }
     },
-    [append, clientId, nextId, pending],
+    [append, nextId, pending],
   );
 
   const complete = useCallback(
     async (eventId: number) => {
-      const updated = await completeEvent(eventId, clientId);
+      const updated = await completeEvent(eventId);
       setEntries((current) =>
         current.map((entry) => {
           if (entry.role !== "assistant") return entry;
@@ -163,7 +160,7 @@ export function useChat(): ChatController {
         }),
       );
     },
-    [clientId],
+    [],
   );
 
   const reportError = useCallback(
@@ -180,7 +177,6 @@ export function useChat(): ChatController {
   }, []);
 
   return {
-    clientId,
     entries,
     pending,
     status,

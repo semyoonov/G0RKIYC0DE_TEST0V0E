@@ -215,6 +215,19 @@ class AssistantService:
             )
             return [to_read(event) for event in events]
 
+    async def export_calendar_ics(
+        self,
+        platform: Platform,
+        external_user_id: str,
+        timezone_name: str | None = None,
+    ) -> bytes:
+        from app.services.calendar_export import export_events_to_ics
+        tz_name = timezone_name or self._settings.timezone
+        async with self._session_factory() as session:
+            user = await UserRepository(session).get_or_create(platform, external_user_id)
+            events = await EventRepository(session).list_all_for_user(user.id)
+            return export_events_to_ics(events, timezone_name=tz_name)
+
     async def set_event_status(
         self,
         platform: Platform,

@@ -1,3 +1,4 @@
+import { readSessionToken } from "../lib/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { VoiceTurnOutcome } from "../lib/conversation";
@@ -129,7 +130,7 @@ function disposeStreamResources(stream: StreamState): void {
   if (stream.context) void stream.context.close().catch(() => {});
 }
 
-export function useVoiceStream(clientId: string): VoiceController {
+export function useVoiceStream(): VoiceController {
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [partial, setPartial] = useState("");
@@ -271,10 +272,16 @@ export function useVoiceStream(clientId: string): VoiceController {
       };
 
       const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(
-        `${scheme}//${window.location.host}/ws/voice?client_id=${encodeURIComponent(clientId)}`,
-      );
+      const socket = new WebSocket(`${scheme}//${window.location.host}/ws/voice`);
       socket.binaryType = "arraybuffer";
+      socket.addEventListener("open", () => {
+        const token = readSessionToken();
+        if (!token) {
+          socket.close(1008, "authentication required");
+          return;
+        }
+        socket.send(JSON.stringify({ type: "auth", token }));
+      });
       stream.socket = socket;
       streamRef.current = stream;
       if (!mounted.current) {
@@ -336,7 +343,7 @@ export function useVoiceStream(clientId: string): VoiceController {
       disposeStreamResources(stream);
       return false;
     }
-  }, [clientId, cleanupStream, stopMicrophone]);
+  }, [cleanupStream, stopMicrophone]);
 
   const startMedia = useCallback((): boolean => {
     const mic = micRef.current;

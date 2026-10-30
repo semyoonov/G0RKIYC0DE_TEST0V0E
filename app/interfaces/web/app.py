@@ -51,7 +51,7 @@ def create_app(
     if auth is not None:
         app.include_router(build_auth_router(auth))
     app.include_router(
-        build_voice_stream_router(streaming_factory, max_streams=settings.ws_max_concurrent_streams)
+        build_voice_stream_router(streaming_factory, auth=auth, max_streams=settings.ws_max_concurrent_streams)
     )
 
     @app.get("/healthz")

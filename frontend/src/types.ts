@@ -9,6 +9,7 @@ export interface AssistantEvent {
   description: string | null;
   starts_at: string | null;
   remind_at: string | null;
+  rrule?: string | null;
   status: EventStatus;
   source: string | null;
   created_at: string;

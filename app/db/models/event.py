@@ -36,6 +36,7 @@ class Event(Base):
     source: Mapped[Platform | None] = mapped_column(
         Enum(Platform, native_enum=False, length=16, values_callable=_enum_values)
     )
+    rrule: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchMeta, reportTelemetry, warmupChat } from "./lib/api";
 import { ChatMessage } from "./components/ChatMessage";
+import { AuthPanel } from "./components/AuthPanel";
 import { Composer } from "./components/Composer";
 import { LinkPanel } from "./components/LinkPanel";
 import { LiveTranscript } from "./components/LiveTranscript";
@@ -15,6 +16,8 @@ import { useVoiceStream } from "./hooks/useVoiceStream";
 import type { ConversationPhase } from "./lib/conversation";
 import { readSpeakReplies, readVoice, writeSpeakReplies, writeVoice } from "./lib/preferences";
 import { useSession } from "./lib/session";
+import { Calendar as CalendarIcon, MessageSquare } from "lucide-react";
+import { CalendarView } from "./components/CalendarView";
 
 const DEFAULT_QUICK_ACTIONS = ["Что у меня сегодня?", "Что на завтра?", "Что на этой неделе?"];
 // Зеркало CLOUD_TTS_VOICES из app/ai/tts/cloud_tts.py: виден сразу, /api/meta его заменяет.
@@ -43,9 +46,10 @@ export default function App() {
   const [speakReplies, setSpeakReplies] = useState(readSpeakReplies);
   const [voices, setVoices] = useState<string[]>(DEFAULT_VOICES);
   const [voiceName, setVoiceName] = useState(readVoice);
+  const [viewMode, setViewMode] = useState<"chat" | "calendar">("chat");
   const session = useSession();
   const chat = useChat();
-  const voice = useVoiceStream(chat.clientId);
+  const voice = useVoiceStream();
   const expectedAudioEntryId = useRef<string | null>(null);
   const speechAbortRef = useRef<AbortController | null>(null);
   const conversationPhaseRef = useRef<ConversationPhase>("idle");
@@ -143,7 +147,7 @@ export default function App() {
           const catalogue = meta.voices;
           setVoices(catalogue);
           // Сохранённый голос, которого больше нет на сервере, синтез не примет.
-          setVoiceName((current) => {
+          setVoiceName((current: string) => {
             if (catalogue.includes(current)) return current;
             if (meta.voice && catalogue.includes(meta.voice)) return meta.voice;
             return catalogue[0];
@@ -201,8 +205,19 @@ export default function App() {
           : chat.status || conversation.hint;
   const composerDisabled = chat.pending || voice.busy;
 
+  if (session.status === "idle" || session.status === "loading") {
+    return (
+      <div className="flex min-h-full items-center justify-center text-sm text-ink-muted" role="status">
+        Проверяем сессию…
+      </div>
+    );
+  }
+  if (session.status !== "ready") {
+    return <AuthPanel initialError={session.status === "error" ? session.error : null} />;
+  }
+
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col border-x border-line/60">
+    <div className={`mx-auto flex h-full w-full transition-all duration-200 flex-col border-x border-line/60 ${viewMode === "calendar" ? "max-w-5xl" : "max-w-4xl"}`}>
       <header className="flex flex-col gap-4 border-b border-line/70 px-4 py-4 sm:px-6">
         {/* Мобилка: название + шестерёнка в строку, переключатели ниже. Планшет/ПК: всё в одну строку.
             Все элементы высотой 36px и прижаты к верху: подпись под переключателем свисает вниз,
@@ -210,88 +225,136 @@ export default function App() {
         <div className="flex flex-wrap items-start gap-x-3 gap-y-3">
           <div className="order-1 flex h-9 min-w-0 flex-1 items-center">
             <div className="min-w-0">
-              <h1 className="truncate text-base font-semibold leading-tight">Ассистент задач и встреч</h1>
-              
+              <h1 className="text-base font-semibold leading-tight">Ассистент задач и встреч</h1>
             </div>
           </div>
+
+          {/* Переключатель режимов: Чат / Календарь */}
+          <div className="order-2 flex h-9 items-center sm:order-2">
+            <div className="flex items-center rounded-xl border border-line bg-panel p-0.5">
+              <button
+                type="button"
+                onClick={() => setViewMode("chat")}
+                className={`inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${
+                  viewMode === "chat"
+                    ? "bg-raised text-ink shadow-sm"
+                    : "text-ink-muted hover:text-ink"
+                }`}
+                title="Режим чата"
+              >
+                <MessageSquare className="size-3.5" aria-hidden="true" />
+                <span>Чат</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("calendar")}
+                className={`inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${
+                  viewMode === "calendar"
+                    ? "bg-accent text-white shadow-sm"
+                    : "text-ink-muted hover:text-ink"
+                }`}
+                title="Режим календаря"
+              >
+                <CalendarIcon className="size-3.5" aria-hidden="true" />
+                <span>Календарь</span>
+              </button>
+            </div>
+          </div>
+
           <div className="order-2 sm:order-3">
             <LinkPanel />
           </div>
-          <div className="order-3 flex w-full min-w-0 items-start gap-2 sm:order-2 sm:w-auto">
-            <ReplyModeSwitch
-              speak={speakReplies}
-              onChange={(next) => {
-                setSpeakReplies(next);
-                writeSpeakReplies(next);
-                if (!next) {
-                  speechAbortRef.current?.abort();
-                  speechAbortRef.current = null;
-                  document.querySelectorAll("audio").forEach((node) => node.pause());
-                  expectedAudioEntryId.current = null;
-                  conversation.notifyPlaybackFinished();
-                }
-              }}
-            />
-            <VoiceSelect
-              voices={voices}
-              value={activeVoice}
-              disabled={!speakReplies}
-              onChange={(next) => {
-                setVoiceName(next);
-                writeVoice(next);
-              }}
-            />
-          </div>
+
+          {viewMode === "chat" ? (
+            <div className="order-3 flex w-full min-w-0 items-start gap-2 sm:order-2 sm:w-auto">
+              <ReplyModeSwitch
+                speak={speakReplies}
+                onChange={(next) => {
+                  setSpeakReplies(next);
+                  writeSpeakReplies(next);
+                  if (!next) {
+                    speechAbortRef.current?.abort();
+                    speechAbortRef.current = null;
+                    document.querySelectorAll("audio").forEach((node) => node.pause());
+                    expectedAudioEntryId.current = null;
+                    conversation.notifyPlaybackFinished();
+                  }
+                }}
+              />
+              <VoiceSelect
+                voices={voices}
+                value={activeVoice}
+                disabled={!speakReplies}
+                onChange={(next) => {
+                  setVoiceName(next);
+                  writeVoice(next);
+                }}
+              />
+            </div>
+          ) : null}
         </div>
-        <QuickActions
-          actions={quickActions}
-          disabled={composerDisabled || voice.recording || conversation.active}
-          onSelect={sendTyped}
-        />
+
+        {viewMode === "chat" ? (
+          <QuickActions
+            actions={quickActions}
+            disabled={composerDisabled || voice.recording || conversation.active}
+            onSelect={sendTyped}
+          />
+        ) : null}
       </header>
 
-      <main
-        ref={messagesRef}
-        className="flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6"
-        aria-live="polite"
-      >
-        <div className="max-w-[92%] rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm leading-relaxed text-ink-muted">
-          Здравствуйте! Напишите или скажите, что запланировать: задачу, встречу или напоминание.
-        </div>
-        {chat.entries.map((entry) => (
-          <ChatMessage
-            key={entry.id}
-            entry={entry}
-            timezone={timezone}
-            autoPlayAudio={speakReplies}
-            synthesizing={chat.synthesizingEntryId === entry.id}
-            onComplete={chat.complete}
-            onReplyAudioEnd={handleReplyAudioEnd}
-          />
-        ))}
-        {awaitingReply ? <TypingIndicator /> : null}
-        {voice.error ? (
-          <div className="max-w-[92%] rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-            {voice.error}
-          </div>
-        ) : null}
-      </main>
-
-      <footer className="border-t border-line/60">
-        <LiveTranscript text={voice.partial} />
-        <Composer
-          disabled={composerDisabled}
-          recording={voice.recording}
-          busy={voice.busy}
-          conversationActive={conversation.active}
-          conversationPhase={conversation.phase}
-          onSend={sendTyped}
-          onToggleRecording={() => void toggleRecording()}
+      {viewMode === "calendar" ? (
+        <CalendarView
+          timezone={timezone}
+          onSwitchToChat={() => setViewMode("chat")}
+          onEventCompleted={chat.complete}
         />
-        <p className="min-h-5 px-4 pb-2 text-xs text-ink-dim sm:px-6" role="status">
-          {status || (awaitingReply ? null : "Нажмите «Голосом» и говорите — текст появляется на лету.")}
-        </p>
-      </footer>
+      ) : (
+        <>
+          <main
+            ref={messagesRef}
+            className="flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6"
+            aria-live="polite"
+          >
+            <div className="max-w-[92%] rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm leading-relaxed text-ink-muted">
+              Здравствуйте! Напишите или скажите, что запланировать: задачу, встречу или напоминание.
+            </div>
+            {chat.entries.map((entry) => (
+              <ChatMessage
+                key={entry.id}
+                entry={entry}
+                timezone={timezone}
+                autoPlayAudio={speakReplies}
+                synthesizing={chat.synthesizingEntryId === entry.id}
+                onComplete={chat.complete}
+                onReplyAudioEnd={handleReplyAudioEnd}
+              />
+            ))}
+            {awaitingReply ? <TypingIndicator /> : null}
+            {voice.error ? (
+              <div className="max-w-[92%] rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+                {voice.error}
+              </div>
+            ) : null}
+          </main>
+
+          <footer className="border-t border-line/60">
+            <LiveTranscript text={voice.partial} />
+            <Composer
+              disabled={composerDisabled}
+              recording={voice.recording}
+              busy={voice.busy}
+              conversationActive={conversation.active}
+              conversationPhase={conversation.phase}
+              onSend={sendTyped}
+              onToggleRecording={() => void toggleRecording()}
+            />
+            <p className="min-h-5 px-4 pb-2 text-xs text-ink-dim sm:px-6" role="status">
+              {status || (awaitingReply ? null : "Нажмите «Голосом» и говорите — текст появляется на лету.")}
+            </p>
+          </footer>
+        </>
+      )}
     </div>
   );
 }

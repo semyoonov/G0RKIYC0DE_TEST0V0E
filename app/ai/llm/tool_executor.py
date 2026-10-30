@@ -118,11 +118,63 @@ class ToolExecutor:
             "delete_event": self._delete_event,
         }
 
+    _GENERIC_REMINDER_TITLES = frozenset({
+        "напоминание",
+        "напоминалка",
+        "напомнить",
+        "напомни",
+        "напоминания",
+        "напоминанием",
+        "reminder",
+        "remind",
+        "новое напоминание",
+        "без названия",
+    })
+
+    _GENERIC_TASK_TITLES = frozenset({
+        "задача",
+        "задачу",
+        "задачи",
+        "дело",
+        "дела",
+        "заметка",
+        "заметку",
+        "запись",
+        "task",
+        "новая задача",
+        "новое дело",
+        "без названия",
+    })
+
+    def _is_empty_or_generic_task_title(self, title: str | None, *, is_reminder: bool = False) -> bool:
+        if not title:
+            return True
+        cleaned = title.strip(" .!?:;«»\"'").lower()
+        if is_reminder:
+            if cleaned in self._GENERIC_REMINDER_TITLES:
+                return True
+            for prefix in (
+                "напоминание на ", "напоминание в ", "напоминание к ", "напоминание о ",
+                "напомнить в ", "напомнить на ", "напомнить о ",
+                "напомни в ", "напомни на ", "напомни о ",
+            ):
+                if cleaned.startswith(prefix):
+                    return True
+        else:
+            if cleaned in self._GENERIC_TASK_TITLES:
+                return True
+            for prefix in ("задача на ", "задача в ", "задача к ", "дело на ", "сделать задачу"):
+                if cleaned.startswith(prefix):
+                    return True
+        return False
+
     async def _create_task(self, arguments: dict[str, Any]) -> ToolResult:
         title = self._text(arguments.get("title"))
-        if not title:
-            return self._error("create_task", "что именно нужно сделать?")
         is_reminder = bool(arguments.get("is_reminder"))
+        if self._is_empty_or_generic_task_title(title, is_reminder=is_reminder):
+            if is_reminder:
+                return self._error("create_task", "как назвать напоминание? Уточни, о чём напомнить.")
+            return self._error("create_task", "как назвать задачу? Уточни, что именно нужно сделать.")
         starts_at = parse_datetime(arguments.get("starts_at"), self.tz)
         remind_at = parse_datetime(arguments.get("remind_at"), self.tz)
         event_type = EventType.REMINDER if is_reminder else EventType.TASK
@@ -133,6 +185,18 @@ class ToolExecutor:
         if starts_at is None and remind_at is not None:
             starts_at = remind_at
 
+        rrule = self._text(arguments.get("rrule"))
+        if not rrule:
+            from app.core.recurrence import detect_rrule
+            rrule = detect_rrule(title) or detect_rrule(arguments.get("description"))
+
+        if rrule:
+            from app.core.recurrence import align_starts_at_with_rrule
+            if starts_at is not None:
+                starts_at = align_starts_at_with_rrule(starts_at, rrule)
+            if remind_at is not None:
+                remind_at = align_starts_at_with_rrule(remind_at, rrule)
+
         event = await self._events.create(
             self._user.id,
             EventCreate(
@@ -141,6 +205,7 @@ class ToolExecutor:
                 description=self._text(arguments.get("description")),
                 starts_at=starts_at,
                 remind_at=remind_at,
+                rrule=rrule,
                 source=self._user.platform,
             ),
         )
@@ -156,6 +221,11 @@ class ToolExecutor:
         content += "."
         if remind_at is not None and remind_at != starts_at:
             content += f" Напомню {format_datetime(remind_at, self.tz)}."
+        if rrule:
+            from app.core.recurrence import format_rrule_ru
+            rrule_desc = format_rrule_ru(rrule)
+            if rrule_desc:
+                content += f" Повтор: {rrule_desc}."
         return ToolResult("create_task", content, [to_read(event)])
 
     _GENERIC_MEETING_TITLES = frozenset({
@@ -191,6 +261,15 @@ class ToolExecutor:
             duration_note = f"Длительность: {duration} мин."
             description = f"{description}\n{duration_note}" if description else duration_note
 
+        rrule = self._text(arguments.get("rrule"))
+        if not rrule:
+            from app.core.recurrence import detect_rrule
+            rrule = detect_rrule(title) or detect_rrule(arguments.get("description"))
+
+        if rrule and starts_at is not None:
+            from app.core.recurrence import align_starts_at_with_rrule
+            starts_at = align_starts_at_with_rrule(starts_at, rrule)
+
         conflict = await self._find_conflict(starts_at, duration)
         event = await self._events.create(
             self._user.id,
@@ -199,6 +278,7 @@ class ToolExecutor:
                 title=title,
                 description=description,
                 starts_at=starts_at,
+                rrule=rrule,
                 source=self._user.platform,
             ),
         )
@@ -207,6 +287,11 @@ class ToolExecutor:
         content = f"Создал встречу: «{title}» — {format_datetime(starts_at, self.tz)}."
         if conflict is not None:
             content += f" В это время уже стоит «{conflict.title}»."
+        if rrule:
+            from app.core.recurrence import format_rrule_ru
+            rrule_desc = format_rrule_ru(rrule)
+            if rrule_desc:
+                content += f" Повтор: {rrule_desc}."
         return ToolResult("create_meeting", content, [to_read(event)])
 
     async def _list_events(self, arguments: dict[str, Any]) -> ToolResult:
@@ -252,20 +337,39 @@ class ToolExecutor:
 
     async def _update_event(self, arguments: dict[str, Any]) -> ToolResult:
         event_id = self._int(arguments.get("event_id"), 0)
-        if not event_id:
-            return self._error("update_event", "какую запись изменить?")
-        event = await self._events.get_for_user(self._user.id, event_id)
+        event = await self._events.get_for_user(self._user.id, event_id) if event_id else None
         if event is None:
-            return self._error("update_event", f"запись {event_id} не найдена")
+            query = self._text(arguments.get("query")) or self._text(arguments.get("target_title"))
+            if query:
+                candidates = await self._events.search(self._user.id, query, limit=3)
+                if candidates:
+                    event = candidates[0]
+                else:
+                    return self._error("update_event", f"запись по запросу «{query}» не найдена")
+            elif event_id:
+                return self._error("update_event", f"запись {event_id} не найдена")
+            else:
+                return self._error("update_event", "какую запись изменить?")
 
         payload: dict[str, Any] = {}
         if self._text(arguments.get("title")):
             payload["title"] = self._text(arguments.get("title"))
         if "description" in arguments:
             payload["description"] = self._text(arguments.get("description"))
+        if "rrule" in arguments:
+            payload["rrule"] = self._text(arguments.get("rrule"))
         for field_name in ("starts_at", "remind_at"):
             if field_name in arguments:
                 payload[field_name] = parse_datetime(arguments.get(field_name), self.tz)
+
+        active_rrule = payload.get("rrule") or event.rrule
+        if active_rrule:
+            from app.core.recurrence import align_starts_at_with_rrule
+            if payload.get("starts_at"):
+                payload["starts_at"] = align_starts_at_with_rrule(payload["starts_at"], active_rrule)
+            if payload.get("remind_at"):
+                payload["remind_at"] = align_starts_at_with_rrule(payload["remind_at"], active_rrule)
+
         if not payload:
             return self._error("update_event", "что именно изменить в записи?")
 
@@ -279,11 +383,19 @@ class ToolExecutor:
 
     async def _complete_event(self, arguments: dict[str, Any]) -> ToolResult:
         event_id = self._int(arguments.get("event_id"), 0)
-        if not event_id:
-            return self._error("complete_event", "какую запись отметить?")
-        event = await self._events.get_for_user(self._user.id, event_id)
+        event = await self._events.get_for_user(self._user.id, event_id) if event_id else None
         if event is None:
-            return self._error("complete_event", f"запись {event_id} не найдена")
+            query = self._text(arguments.get("query")) or self._text(arguments.get("title"))
+            if query:
+                candidates = await self._events.search(self._user.id, query, limit=3)
+                if candidates:
+                    event = candidates[0]
+                else:
+                    return self._error("complete_event", f"запись по запросу «{query}» не найдена")
+            elif event_id:
+                return self._error("complete_event", f"запись {event_id} не найдена")
+            else:
+                return self._error("complete_event", "какую запись отметить?")
         done = arguments.get("done", True)
         updated = await self._events.mark_done(event, done=bool(done))
         await self._invalidate_cache()
@@ -296,11 +408,19 @@ class ToolExecutor:
 
     async def _delete_event(self, arguments: dict[str, Any]) -> ToolResult:
         event_id = self._int(arguments.get("event_id"), 0)
-        if not event_id:
-            return self._error("delete_event", "какую запись удалить?")
-        event = await self._events.get_for_user(self._user.id, event_id)
+        event = await self._events.get_for_user(self._user.id, event_id) if event_id else None
         if event is None:
-            return self._error("delete_event", f"запись {event_id} не найдена")
+            query = self._text(arguments.get("query")) or self._text(arguments.get("title"))
+            if query:
+                candidates = await self._events.search(self._user.id, query, limit=3)
+                if candidates:
+                    event = candidates[0]
+                else:
+                    return self._error("delete_event", f"запись по запросу «{query}» не найдена")
+            elif event_id:
+                return self._error("delete_event", f"запись {event_id} не найдена")
+            else:
+                return self._error("delete_event", "какую запись удалить?")
         line = format_event_line(to_read(event), self.tz, with_id=False)
         await self._events.delete(event)
         await self._invalidate_cache()

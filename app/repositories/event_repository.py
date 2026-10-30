@@ -55,6 +55,17 @@ _SEARCH_STOPWORDS = frozenset(
         "на",
         "найди",
         "напомни",
+        "напоминание",
+        "напоминания",
+        "напоминаний",
+        "встреча",
+        "встречи",
+        "встречу",
+        "встреч",
+        "удали",
+        "удалить",
+        "отмени",
+        "отменить",
         "не",
         "но",
         "о",
@@ -102,6 +113,7 @@ class EventRepository(BaseRepository[Event]):
             description=data.description,
             starts_at=to_db(data.starts_at) if data.starts_at else None,
             remind_at=to_db(data.remind_at) if data.remind_at else None,
+            rrule=data.rrule,
             status=data.status,
             source=data.source,
         )
@@ -173,27 +185,63 @@ class EventRepository(BaseRepository[Event]):
         if not tokens:
             return []
 
-        statement = select(Event).where(
+        base_filter = [
             Event.user_id == user_id,
             Event.status != EventStatus.CANCELLED,
-        )
+        ]
+        if not include_done:
+            base_filter.append(Event.status == EventStatus.PENDING)
+
+        token_conditions = []
         for token in tokens:
             patterns = _token_patterns(token)
-            statement = statement.where(
+            token_conditions.append(
                 or_(
                     *(Event.title.ilike(pattern) for pattern in patterns),
                     *(Event.description.ilike(pattern) for pattern in patterns),
                 )
             )
-        if not include_done:
-            statement = statement.where(Event.status == EventStatus.PENDING)
-        statement = statement.order_by(
-            Event.starts_at.is_(None),
-            Event.starts_at.desc(),
-            Event.created_at.desc(),
-        ).limit(limit)
+
+        # 1. Conjunction (all search terms match)
+        statement = (
+            select(Event)
+            .where(*base_filter, and_(*token_conditions))
+            .order_by(
+                Event.starts_at.is_(None),
+                Event.starts_at.desc(),
+                Event.created_at.desc(),
+            )
+            .limit(limit)
+        )
         result = await self.session.execute(statement)
-        return list(result.scalars().all())
+        matches = list(result.scalars().all())
+        if matches:
+            return matches
+
+        # 2. Fallback when extra words (e.g. weekdays, recurrence) are in the query
+        if len(tokens) > 1:
+            statement = (
+                select(Event)
+                .where(*base_filter, or_(*token_conditions))
+                .limit(max(limit * 3, 20))
+            )
+            result = await self.session.execute(statement)
+            candidates = list(result.scalars().all())
+            if candidates:
+                query_lower = query.lower().strip()
+
+                def rank_key(event: Event) -> tuple[int, int, bool, datetime]:
+                    t_lower = (event.title or "").lower().strip()
+                    title_match = 2 if (t_lower and (t_lower in query_lower or query_lower in t_lower)) else 0
+                    token_hits = sum(1 for t in tokens if t in t_lower)
+                    is_pending = event.status == EventStatus.PENDING
+                    created = event.created_at or datetime.min
+                    return (title_match, token_hits, is_pending, created)
+
+                candidates.sort(key=rank_key, reverse=True)
+                return candidates[:limit]
+
+        return []
 
     async def upcoming(self, user_id: int, now: datetime | None = None, limit: int = 5) -> list[Event]:
         moment = to_db(now or utcnow())
@@ -244,7 +292,28 @@ class EventRepository(BaseRepository[Event]):
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
+    async def list_all_for_user(self, user_id: int) -> list[Event]:
+        statement = (
+            select(Event)
+            .where(Event.user_id == user_id, Event.status != EventStatus.CANCELLED)
+            .order_by(Event.starts_at.is_(None), Event.starts_at.asc(), Event.id.asc())
+        )
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
     async def mark_reminder_sent(self, event: Event, sent_at: datetime | None = None) -> Event:
-        event.reminder_sent_at = to_db(sent_at or utcnow())
+        sent_moment = sent_at or utcnow()
+        event.reminder_sent_at = to_db(sent_moment)
+        if event.rrule and event.remind_at:
+            from app.core.recurrence import next_recurrence
+            from app.core.timeutils import from_db
+            curr_remind = from_db(event.remind_at)
+            next_dt = next_recurrence(event.rrule, curr_remind, sent_moment)
+            if next_dt:
+                if event.starts_at:
+                    delta = from_db(event.starts_at) - curr_remind
+                    event.starts_at = to_db(next_dt + delta)
+                event.remind_at = to_db(next_dt)
+                event.reminder_sent_at = None
         await self.session.commit()
         return event

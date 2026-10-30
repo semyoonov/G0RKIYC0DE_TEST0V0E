@@ -69,7 +69,14 @@ def max_init_data(*, user: dict | None = None, start_param: str | None = None, t
     return urlencode(_signed_params(params, token, exclude={"hash", "signature"}))
 
 
-def vk_launch_params(*, user_id: int = 555, secret: str = VK_SECRET, app_id: int = VK_APP_ID) -> str:
+def vk_launch_params(
+    *,
+    user_id: int = 555,
+    secret: str = VK_SECRET,
+    app_id: int = VK_APP_ID,
+    start_param: str | None = None,
+    urlsafe: bool = False,
+) -> str:
     params = {
         "vk_access_token_settings": "",
         "vk_app_id": str(app_id),
@@ -81,9 +88,15 @@ def vk_launch_params(*, user_id: int = 555, secret: str = VK_SECRET, app_id: int
         "vk_ts": str(int(time.time())),
         "vk_user_id": str(user_id),
     }
+    if start_param:
+        params["vk_app_hash"] = f"startapp={start_param}"
+        params["startapp"] = start_param
     check = "&".join(f"{key}={params[key]}" for key in sorted(params) if key.startswith("vk_"))
     signature = hmac.new(secret.encode(), check.encode(), hashlib.sha256).digest()
-    params["sign"] = base64.b64encode(signature).decode()
+    if urlsafe:
+        params["sign"] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+    else:
+        params["sign"] = base64.b64encode(signature).decode()
     return urlencode(params)
 
 
@@ -160,3 +173,26 @@ def test_vk_launch_params_reject_foreign_app() -> None:
 def test_vk_launch_params_require_secret() -> None:
     with pytest.raises(LaunchNotConfigured):
         vk_identity(vk_launch_params(), "")
+
+
+def test_vk_official_urlsafe_sign_accepted() -> None:
+    params = {
+        "vk_access_token_settings": "",
+        "vk_app_id": str(VK_APP_ID),
+        "vk_are_notifications_enabled": "0",
+        "vk_is_app_user": "1",
+        "vk_language": "ru",
+        "vk_platform": "mobile_web",
+        "vk_ref": "other",
+        "vk_ts": str(int(time.time())),
+        "vk_user_id": "777",
+    }
+    check = urlencode([(k, params[k]) for k in sorted(params) if k.startswith("vk_")])
+    sig = hmac.new(VK_SECRET.encode(), check.encode(), hashlib.sha256).digest()
+    params["sign"] = base64.urlsafe_b64encode(sig).rstrip(b"=").decode("ascii")
+    raw = urlencode(params)
+
+    context = vk_identity(raw, VK_SECRET, app_id=VK_APP_ID)
+    assert context.identity.platform is Platform.VK
+    assert context.identity.external_id == "777"
+

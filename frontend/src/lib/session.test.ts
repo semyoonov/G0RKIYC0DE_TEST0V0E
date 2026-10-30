@@ -29,7 +29,7 @@ function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
     identity: {
       platform: "web",
       platform_title: "Веб",
-      external_id: "client-anon",
+      external_id: "email-identity-1",
       display_name: null,
     },
     user: { id: 7 },
@@ -37,7 +37,7 @@ function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
       {
         platform: "web",
         platform_title: "Веб",
-        external_id: "client-anon",
+        external_id: "email-identity-1",
         display_name: null,
       },
     ],
@@ -84,28 +84,14 @@ afterEach(() => {
 });
 
 describe("bootstrapSession", () => {
-  it("opens a web session with the anonymous client id", async () => {
-    window.localStorage.setItem("assistant_client_id", "client-anon");
-    fetchMock.mockResolvedValueOnce(jsonResponse(makeSession()));
+  it("does not create an anonymous web session", async () => {
 
     await session.bootstrapSession();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const { path, init } = requestAt(0);
-    expect(path).toBe("/api/auth/session");
-    expect(init?.method).toBe("POST");
-    expect(requestBody(init)).toEqual({
-      platform: "web",
-      payload: null,
-      client_id: "client-anon",
-    });
-    expect(window.localStorage.getItem("assistant_session_token")).toBe("token-1");
-    expect(session.getToken()).toBe("token-1");
-    const snapshot = session.getSessionSnapshot();
-    expect(snapshot.status).toBe("ready");
-    expect(snapshot.session?.identity.platform).toBe("web");
-    expect(snapshot.error).toBeNull();
-    expect(snapshot.fallback).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("assistant_session_token")).toBeNull();
+    expect(session.getToken()).toBeNull();
+    expect(session.getSessionSnapshot().status).toBe("unauthenticated");
   });
 
   it("reuses a stored token through /api/auth/me", async () => {
@@ -115,15 +101,14 @@ describe("bootstrapSession", () => {
     await session.bootstrapSession();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const { path, init } = requestAt(0);
-    expect(path).toBe("/api/auth/me");
-    expect(authorization(init)).toBe("Bearer stored-token");
+    expect(requestAt(0).path).toBe("/api/auth/me");
+    expect(authorization(requestAt(0).init)).toBe("Bearer stored-token");
     expect(window.localStorage.getItem("assistant_session_token")).toBe("refreshed-token");
     expect(session.getToken()).toBe("refreshed-token");
     expect(session.getSessionSnapshot().status).toBe("ready");
   });
 
-  it("prefers the mini app launch over a stored web token", async () => {
+  it("prefers a signed mini-app launch over a stored web token", async () => {
     launchState.current = { platform: "vk", payload: "vk_user_id=1&sign=abc" };
     window.localStorage.setItem("assistant_session_token", "web-token");
     fetchMock.mockResolvedValueOnce(
@@ -143,64 +128,46 @@ describe("bootstrapSession", () => {
     await session.bootstrapSession();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const { path, init } = requestAt(0);
-    expect(path).toBe("/api/auth/session");
-    expect(requestBody(init)).toEqual({ platform: "vk", payload: "vk_user_id=1&sign=abc", client_id: null });
+    expect(requestAt(0).path).toBe("/api/auth/session");
+    expect(requestBody(requestAt(0).init)).toEqual({ platform: "vk", payload: "vk_user_id=1&sign=abc" });
     expect(window.localStorage.getItem("assistant_session_token")).toBe("vk-token");
     expect(session.getSessionSnapshot().session?.identity.platform).toBe("vk");
   });
 
-  it("opens a fresh session when the stored token is rejected", async () => {
-    window.localStorage.setItem("assistant_session_token", "stale-token");
-    window.localStorage.setItem("assistant_client_id", "client-anon");
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ detail: "Сессия истекла. Обновите страницу." }, 401))
-      .mockResolvedValueOnce(jsonResponse(makeSession({ token: "fresh-token" })));
+  it("requires email verification when an old anonymous web token is rejected", async () => {
+    window.localStorage.setItem("assistant_session_token", "legacy-token");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Сессия истекла." }, 401));
 
     await session.bootstrapSession();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestAt(0).path).toBe("/api/auth/me");
-    expect(requestAt(1).path).toBe("/api/auth/session");
-    expect(requestBody(requestAt(1).init)).toMatchObject({
-      platform: "web",
-      client_id: "client-anon",
-    });
-    expect(window.localStorage.getItem("assistant_session_token")).toBe("fresh-token");
-    expect(session.getSessionSnapshot().error).toBeNull();
+    // Keep the signed token only so /email/request and /email/verify can migrate
+    // the old browser account and retain its events.
+    expect(window.localStorage.getItem("assistant_session_token")).toBe("legacy-token");
+    expect(session.getSessionSnapshot().status).toBe("unauthenticated");
+    expect(session.getSessionSnapshot().session).toBeNull();
   });
 
-  it("falls back to the web login when the platform is unavailable", async () => {
+  it("does not fall back to anonymous web login when mini-app auth fails", async () => {
     launchState.current = { platform: "telegram", payload: "auth_date=1&hash=abc" };
-    window.localStorage.setItem("assistant_client_id", "client-anon");
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ detail: "Этот способ входа пока не настроен." }, 503))
-      .mockResolvedValueOnce(jsonResponse(makeSession({ token: "web-token" })));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Этот способ входа пока не настроен." }, 503));
 
     await session.bootstrapSession();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestBody(requestAt(0).init)).toEqual({
       platform: "telegram",
       payload: "auth_date=1&hash=abc",
-      client_id: null,
-    });
-    expect(requestBody(requestAt(1).init)).toEqual({
-      platform: "web",
-      payload: null,
-      client_id: "client-anon",
     });
     const snapshot = session.getSessionSnapshot();
-    expect(snapshot.status).toBe("ready");
-    expect(snapshot.fallback).toEqual({
-      platform: "telegram",
-      reason: "Этот способ входа пока не настроен.",
-    });
-    expect(snapshot.session?.identity.platform).toBe("web");
-    expect(session.getToken()).toBe("web-token");
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.session).toBeNull();
+    expect(snapshot.fallback?.platform).toBe("telegram");
   });
 
   it("reports a readable error when the server is unreachable", async () => {
+    window.localStorage.setItem("assistant_session_token", "stored-token");
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     await expect(session.bootstrapSession()).resolves.toBeUndefined();
@@ -223,36 +190,25 @@ describe("account requests", () => {
     intent: null,
   };
 
-  it("retries once with a fresh token after a 401", async () => {
-    window.localStorage.setItem("assistant_session_token", "stale-token");
-    window.localStorage.setItem("assistant_client_id", "client-anon");
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ detail: "Сессия истекла." }, 401))
-      .mockResolvedValueOnce(jsonResponse(makeSession({ token: "fresh-token" })))
-      .mockResolvedValueOnce(jsonResponse(reply));
+  it("does not retry an unauthorized chat request with an anonymous session", async () => {
+    window.localStorage.setItem("assistant_session_token", "legacy-token");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Нет доступа." }, 401));
 
-    const result = await postChat("Привет", "client-anon");
+    await expect(postChat("Привет")).rejects.toBeInstanceOf(ApiError);
 
-    expect(result).toEqual(reply);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestAt(0).path).toBe("/api/chat");
-    expect(authorization(requestAt(0).init)).toBe("Bearer stale-token");
-    expect(requestAt(1).path).toBe("/api/auth/session");
-    expect(requestAt(2).path).toBe("/api/chat");
-    expect(authorization(requestAt(2).init)).toBe("Bearer fresh-token");
-    expect(window.localStorage.getItem("assistant_session_token")).toBe("fresh-token");
-    expect(session.getToken()).toBe("fresh-token");
+    expect(authorization(requestAt(0).init)).toBe("Bearer legacy-token");
+    expect(window.localStorage.getItem("assistant_session_token")).toBeNull();
+    expect(session.getSessionSnapshot().status).toBe("unauthenticated");
   });
 
-  it("does not retry a second 401", async () => {
-    window.localStorage.setItem("assistant_session_token", "stale-token");
-    window.localStorage.setItem("assistant_client_id", "client-anon");
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ detail: "Сессия истекла." }, 401))
-      .mockResolvedValueOnce(jsonResponse(makeSession({ token: "fresh-token" })))
-      .mockResolvedValueOnce(jsonResponse({ detail: "Нет доступа." }, 401));
+  it("does not send client_id with an authenticated chat request", async () => {
+    window.localStorage.setItem("assistant_session_token", "valid-token");
+    fetchMock.mockResolvedValueOnce(jsonResponse(reply));
 
-    await expect(postChat("Привет", "client-anon")).rejects.toBeInstanceOf(ApiError);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await expect(postChat("Привет")).resolves.toEqual(reply);
+
+    expect(requestBody(requestAt(0).init)).toEqual({ text: "Привет", speak: false });
   });
 });

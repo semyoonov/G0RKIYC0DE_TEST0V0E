@@ -2,10 +2,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.exceptions import NotFoundError
-from app.domain.enums import Period
+from app.domain.enums import Period, Platform
+from app.domain.identity import Identity
 from app.domain.models import AssistantResponse
 from app.interfaces.web import routes as routes_module
 from app.interfaces.web.app import create_app
+from app.services.auth.tokens import SessionTokens
 
 
 class FakeAssistant:
@@ -22,10 +24,24 @@ class FakeAssistant:
         raise NotFoundError(f"event {event_id} not found")
 
 
+class FakeAuth:
+    def __init__(self, settings):
+        self.settings = settings
+
+    async def account(self, token: str):
+        class Account:
+            identity = Identity(platform=Platform.WEB, external_id="web-demo")
+        return Account()
+
+
 @pytest.fixture
 async def client(settings):
-    app = create_app(FakeAssistant(), settings)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http_client:
+    app = create_app(FakeAssistant(), settings, auth=FakeAuth(settings))
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer dummy"},
+    ) as http_client:
         yield http_client
 
 
@@ -41,8 +57,8 @@ async def test_audio_upload_is_capped(client, monkeypatch):
     assert response.status_code == 413
 
 
-async def test_client_id_length_is_validated(client):
-    response = await client.get("/api/events", params={"client_id": "x" * 129, "period": "today"})
+async def test_invalid_period_is_validated(client):
+    response = await client.get("/api/events", params={"period": "invalid_period"})
 
     assert response.status_code == 422
 
