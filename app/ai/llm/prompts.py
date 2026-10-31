@@ -20,7 +20,7 @@ def build_system_prompt(tz: ZoneInfo, now: datetime | None = None) -> str:
     after_tomorrow = current + timedelta(days=2)
     week_start = current - timedelta(days=current.weekday())
     next_week_start = week_start + timedelta(days=7)
-    # The model cannot add weekdays reliably; give it every date it may need.
+    # Модель путается в днях недели — даём ей все даты, которые могут понадобиться.
     upcoming = ", ".join(
         f"{_WEEKDAYS_SHORT[(current + timedelta(days=offset)).weekday()]} "
         f"{(current + timedelta(days=offset)).strftime('%d.%m.%Y')}"

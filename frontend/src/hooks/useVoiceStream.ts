@@ -36,7 +36,7 @@ interface StreamState {
   rejectReady: (error: Error) => void;
   ready: Promise<void>;
   intentional: boolean;
-  /** A muted turn keeps capturing energy but sends no frames to the server. */
+  /** Приглушённый ход продолжает снимать энергию, но кадры на сервер не отправляет. */
   muted: boolean;
 }
 
@@ -46,7 +46,7 @@ interface MediaState {
 }
 
 export interface BeginTurnOptions {
-  /** Capture frames but do not forward them until `unmute()` is called. */
+  /** Снимать кадры, но не отправлять их до вызова `unmute()`. */
   muted?: boolean;
 }
 
@@ -55,25 +55,25 @@ export interface VoiceController {
   busy: boolean;
   partial: string;
   error: string | null;
-  /** True when this browser can stream PCM frames and show server partials. */
+  /** true, если браузер умеет стримить PCM-кадры и показывать промежуточные расшифровки. */
   streaming: boolean;
-  /** One-shot path kept for the regular "Голосом" button and the blob fallback. */
+  /** Одноразовый путь для обычной кнопки «Голосом» и запасного варианта с blob. */
   start: () => Promise<void>;
   stop: () => Promise<VoiceOutcome>;
   clearError: () => void;
-  /** Conversation-mode primitives: one microphone, one streaming turn at a time. */
+  /** Примитивы режима диалога: один микрофон и один потоковый ход одновременно. */
   openMicrophone: () => Promise<boolean>;
   beginTurn: (options?: BeginTurnOptions) => Promise<boolean>;
   commitTurn: () => Promise<VoiceTurnOutcome>;
   releaseMicrophone: () => void;
-  /** Stops forwarding frames on the current turn without closing anything. */
+  /** Перестаёт отправлять кадры в текущем ходе, ничего не закрывая. */
   mute: () => void;
-  /** Resumes forwarding frames on the current turn. */
+  /** Возобновляет отправку кадров в текущем ходе. */
   unmute: () => void;
   subscribeEnergy: (handler: (energy: number) => void) => () => void;
 }
 
-/** Echo cancellation keeps the assistant's own voice out of the barge-in check. */
+/** Эхоподавление не пускает голос ассистента в проверку перебивания. */
 const PREFERRED_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
   noiseSuppression: true,
@@ -88,7 +88,7 @@ async function requestMicrophone(): Promise<MediaStream> {
       audio: PREFERRED_AUDIO_CONSTRAINTS,
     });
   } catch {
-    // Constraints are not supported everywhere; a plain audio stream still works.
+    // Ограничения поддерживаются не везде; обычный аудиопоток тоже работает.
     return navigator.mediaDevices.getUserMedia(FALLBACK_AUDIO_CONSTRAINTS);
   }
 }
@@ -117,14 +117,12 @@ function disposeStreamResources(stream: StreamState): void {
   try {
     if (stream.socket && stream.socket.readyState <= WebSocket.OPEN) stream.socket.close();
   } catch {
-    // Socket is already gone.
   }
   if (stream.node) stream.node.port.onmessage = null;
   [stream.source, stream.node, stream.sink].forEach((node) => {
     try {
       node?.disconnect();
     } catch {
-      // Node was never connected.
     }
   });
   if (stream.context) void stream.context.close().catch(() => {});
@@ -164,7 +162,6 @@ export function useVoiceStream(): VoiceController {
       try {
         media.recorder.stop();
       } catch {
-        // Recorder was already stopped.
       }
     }
   }, []);
@@ -324,8 +321,8 @@ export function useVoiceStream(): VoiceController {
       stream.node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
         const energy = pcm16Energy(event.data);
         energyHandlers.current.forEach((handler) => handler(energy));
-        // A muted turn still measures energy (barge-in) but stays silent
-        // towards the recognizer: no partials, no auto-commit.
+        // Приглушённый ход всё равно измеряет энергию (перебивание), но молчит
+        // в сторону распознавателя: без промежуточных расшифровок и автозавершения.
         if (stream.muted) return;
         if (socket.readyState !== WebSocket.OPEN) return;
         socket.send(event.data);
@@ -409,14 +406,13 @@ export function useVoiceStream(): VoiceController {
         stream.socket.send(JSON.stringify({ type: "stop" }));
       }
     } catch {
-      // The close handler still resolves the stream.
+      // Поток всё равно завершит обработчик закрытия.
     }
-    // Stop feeding frames to the server while it finalizes the transcript.
+    // Перестаём слать кадры, пока сервер финализирует расшифровку.
     if (stream.node) stream.node.port.onmessage = null;
     try {
       stream.source?.disconnect();
     } catch {
-      // The source was already disconnected.
     }
 
     let outcome: FinalMessage = { type: "timeout" };
@@ -495,7 +491,7 @@ export function useVoiceStream(): VoiceController {
         return false;
       }
       if (streamRef.current) {
-        // The turn is already streaming: muting is only a forwarding flag.
+        // Ход уже стримит: заглушение — это только флаг отправки.
         if (options?.muted) mute();
         else unmute();
         return true;
@@ -504,7 +500,7 @@ export function useVoiceStream(): VoiceController {
       setPartial("");
       const started = await startStream(options?.muted ?? false);
       if (!started) {
-        // A manual release stops the microphone; do not surface that as an error.
+        // Ручное освобождение останавливает микрофон; показывать это как ошибку не нужно.
         if (mounted.current && micRef.current) setError((current) => current ?? STREAM_START_TEXT);
         return false;
       }

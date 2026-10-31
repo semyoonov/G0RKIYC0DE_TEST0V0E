@@ -41,7 +41,7 @@ def help_keyboard() -> ReplyKeyboardMarkup:
 
 
 def cards_inline_keyboard(events: Sequence[EventRead]) -> InlineKeyboardMarkup | None:
-    """Done buttons for the pending events of a card message."""
+    """Кнопки «Готово» для записей, ещё ждущих действия."""
     rows: list[list[InlineKeyboardButton]] = []
     for event in pending_events(events):
         button = done_button(event)

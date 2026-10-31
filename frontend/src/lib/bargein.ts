@@ -1,31 +1,31 @@
 /**
- * Barge-in detection for hands-free playback.
+ * Детектор перебивания для воспроизведения в режиме без рук.
  *
- * While the reply audio is playing the microphone keeps producing frames but
- * they are not sent to the recognizer. Those local RMS values are enough to
- * decide that the user started talking over the assistant: the mean level of a
- * short window has to be speech-like and contain a real peak, so a single click
- * or a cough never interrupts the answer while talking over it does.
+ * Пока звучит ответ, микрофон продолжает выдавать кадры, но в распознаватель
+ * они не уходят. Этих локальных значений RMS достаточно, чтобы понять, что
+ * пользователь заговорил поверх ассистента: средний уровень короткого окна
+ * должен быть речевым и содержать настоящий пик, поэтому одиночный щелчок или
+ * кашель ответ не прерывает, а речь поверх — прерывает.
  *
- * Pure and clock-injected, so the decision is tested with synthetic energies.
+ * Код чистый, часы внедряются извне: решение проверяется на синтетических энергиях.
  */
 
-/** Peak RMS that has to appear in the window: a click or a keyboard never gets there. */
+/** Пиковый RMS, который обязан появиться в окне: щелчок или клавиатура до него не дотягивают. */
 export const BARGE_IN_ENERGY_THRESHOLD = 0.05;
 
-/** Mean RMS over the window: speech dips between words, so the average is what counts. */
+/** Средний RMS по окну: речь проседает между словами, поэтому решает среднее. */
 export const BARGE_IN_MEAN_THRESHOLD = 0.035;
 
-/** The reply audio itself needs a moment to start; its click is not a barge-in. */
+/** Самому аудио ответа нужно время на старт: его щелчок — не перебивание. */
 export const BARGE_IN_STARTUP_GUARD_MS = 300;
 
-/** Sliding window over which the speech level is averaged. */
+/** Скользящее окно, по которому усредняется уровень речи. */
 export const BARGE_IN_WINDOW_MS = 400;
 
-/** How long the window has to stay loud before playback is interrupted. */
+/** Сколько окно должно продержаться громким, прежде чем воспроизведение прервётся. */
 export const BARGE_IN_HOLD_MS = 300;
 
-/** Frames above the mean threshold the window needs: one click is a single frame. */
+/** Сколько кадров выше среднего порога нужно окну: щелчок даёт всего один кадр. */
 export const BARGE_IN_MIN_LOUD_FRAMES = 3;
 
 export interface BargeInOptions {
@@ -56,7 +56,7 @@ export class BargeInDetector {
     this.holdMs = options.holdMs ?? BARGE_IN_HOLD_MS;
   }
 
-  /** True once this detector has fired; only `reset` clears it. */
+  /** true после срабатывания; очищается только через `reset`. */
   get triggered(): boolean {
     return this.fired;
   }
@@ -67,9 +67,9 @@ export class BargeInDetector {
   }
 
   /**
-   * Feeds one frame. Speech rises and falls, so the decision uses the mean level of
-   * a short window that also has to contain a real peak: a cough or a click never
-   * interrupts the answer, talking over it does.
+   * Принимает один кадр. Речь нарастает и затухает, поэтому решение принимается
+   * по среднему уровню короткого окна, в котором обязан быть настоящий пик:
+   * кашель или щелчок ответ не прерывают, а речь поверх — прерывает.
    */
   noteEnergy(energy: number, now: number): boolean {
     if (this.fired) return false;

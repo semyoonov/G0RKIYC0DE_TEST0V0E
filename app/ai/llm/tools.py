@@ -137,5 +137,3 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         },
     },
 ]
-
-TOOL_NAMES = frozenset(tool["name"] for tool in TOOLS_SCHEMA)

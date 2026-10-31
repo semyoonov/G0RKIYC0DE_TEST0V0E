@@ -55,8 +55,8 @@ def build_voice_stream_router(
             await websocket.close(code=CLOSE_POLICY)
             return
 
-        # The browser sends its signed session token as the first WebSocket message.
-        # Do not start recording or allocate a recognizer before validating it.
+        # Браузер присылает подписанный токен сессии первым сообщением WebSocket.
+        # До его проверки не начинаем запись и не создаём распознаватель.
         try:
             raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
         except (TimeoutError, WebSocketDisconnect):
@@ -112,7 +112,7 @@ def build_voice_stream_router(
 
 
 async def _receive_audio(websocket: WebSocket, session: StreamingSession) -> bool:
-    """Reads frames until the client asks to stop; returns False when it cancelled."""
+    """Читает кадры до команды stop; False, если клиент отменил турн."""
     while True:
         message = await websocket.receive()
         if message["type"] == "websocket.disconnect":

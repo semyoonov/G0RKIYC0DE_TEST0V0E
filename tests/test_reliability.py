@@ -1,4 +1,4 @@
-"""The assistant must not invent times, lose actions or echo tool calls."""
+"""Ассистент не выдумывает время, не теряет действия и не пересказывает вызовы инструментов."""
 
 import json
 from datetime import date, datetime, time, timedelta, timezone
@@ -35,7 +35,7 @@ class ScriptedLLM:
 
 
 class FactsLLM:
-    """Stands in for the narrow extraction call."""
+    """Заглушка узкого вызова извлечения фактов о времени."""
 
     def __init__(self, **facts) -> None:
         self.facts = facts
@@ -82,7 +82,7 @@ async def test_meeting_lands_on_the_weekday_the_extraction_reported(session, use
         session, user, settings, None, llm=llm, utterance="В четверг в 11 у меня встреча с дизайнером"
     )
 
-    # The chat model proposed Monday; the extraction says Thursday.
+    # Чат-модель предложила понедельник, извлечение говорит про четверг.
     result = await executor.execute(
         "create_meeting",
         {"title": "с дизайнером", "starts_at": "2026-11-02T11:00:00+03:00"},
@@ -253,7 +253,7 @@ def test_humanize_strips_leaked_syntax():
 
 
 def _factory(session):
-    """A session factory that hands out the test session, mirroring app wiring."""
+    """Фабрика сессий, отдающая тестовую сессию, как в сборке приложения."""
     from contextlib import asynccontextmanager
 
     @asynccontextmanager

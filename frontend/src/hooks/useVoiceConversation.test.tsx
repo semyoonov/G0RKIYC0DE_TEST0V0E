@@ -210,7 +210,7 @@ describe("useVoiceConversation muted turn and barge-in", () => {
 
     expect(fake.voice.unmute).toHaveBeenCalledTimes(1);
     expect(result.current.phase).toBe("listening");
-    // Neither the microphone nor the websocket is reopened.
+    // Ни микрофон, ни веб-сокет не переоткрываются.
     expect(fake.voice.beginTurn).toHaveBeenCalledTimes(2);
     expect(props.pausePlayback).not.toHaveBeenCalled();
     expect(props.telemetry).toHaveBeenCalledWith("phase", "listening", "");
@@ -225,7 +225,7 @@ describe("useVoiceConversation muted turn and barge-in", () => {
     expect(result.current.phase).toBe("speaking");
 
     act(() => {
-      // The reply audio needs a moment to start before barge-in is armed.
+      // Звуку ответа нужно время на старт, только потом взводится перебивание.
       vi.advanceTimersByTime(320);
       fake.emit(0.12);
       vi.advanceTimersByTime(120);

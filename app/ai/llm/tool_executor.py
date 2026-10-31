@@ -23,7 +23,7 @@ from app.services.cache.redis_service import CacheService
 log = get_logger(__name__)
 
 ERROR_PREFIX = "ОШИБКА:"
-# A day holds a handful of records; a month or "all" must not render a wall of cards.
+# В дне горстка записей; месяц или «все» не должны превращаться в стену карточек.
 LIST_LIMIT = 25
 _PERIOD_TITLES = {
     Period.TODAY: "сегодня",
@@ -76,7 +76,7 @@ class ToolResult:
 
 
 class ToolExecutor:
-    """Executes GigaChat function calls against the repositories of one user."""
+    """Выполняет вызовы инструментов GigaChat над репозиториями одного пользователя."""
 
     def __init__(
         self,
@@ -112,7 +112,7 @@ class ToolExecutor:
 
     @staticmethod
     def _time_named(arguments: dict[str, Any]) -> bool:
-        """The model reports whether the user actually named a clock time."""
+        """Назвал ли пользователь время — по ответу модели."""
         value = arguments.get("time_named")
         return True if value is None else bool(value)
 

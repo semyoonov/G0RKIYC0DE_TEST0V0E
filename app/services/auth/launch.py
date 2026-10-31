@@ -18,16 +18,16 @@ _CLOCK_SKEW_SECONDS = 30 * 60
 
 
 class LaunchError(ValueError):
-    """Launch parameters are missing, forged or stale."""
+    """Параметры запуска отсутствуют, подделаны или просрочены."""
 
 
 class LaunchNotConfigured(LaunchError):
-    """The platform is not configured, so its launch data cannot be validated."""
+    """Платформа не настроена, проверить данные запуска нечем."""
 
 
 @dataclass(frozen=True, slots=True)
 class LaunchContext:
-    """What a validated mini-app launch tells us about the visitor."""
+    """Что проверенный запуск мини-приложения сообщает о посетителе."""
 
     identity: Identity
     language: str | None = None
@@ -38,7 +38,7 @@ def _hmac_sha256(key: bytes, message: bytes) -> bytes:
 
 
 def parse_launch_params(raw: str | None) -> dict[str, str]:
-    """Parse `a=1&b=2`, `?a=1` and `#a=1` alike; every platform uses one of these."""
+    """Разбирает `a=1&b=2`, `?a=1` и `#a=1` — каждая платформа использует одну из форм."""
     if raw is None:
         raise LaunchError("launch parameters are empty")
     text = raw.strip()
@@ -116,7 +116,7 @@ def telegram_identity(
     now: int | None = None,
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> LaunchContext:
-    """Validate Telegram WebApp initData (core.telegram.org/bots/webapps)."""
+    """Проверяет initData Telegram WebApp (core.telegram.org/bots/webapps)."""
     if not bot_token.strip():
         raise LaunchNotConfigured("telegram bot token is not configured")
     params = parse_launch_params(raw)
@@ -145,10 +145,10 @@ def max_identity(
     now: int | None = None,
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> LaunchContext:
-    """Validate MAX WebApp initData (dev.max.ru/help/miniapps).
+    """Проверяет initData MAX WebApp (dev.max.ru/help/miniapps).
 
-    The scheme matches Telegram's: `hash` signs a sorted `key=value` block with a
-    key derived from the bot token, and `signature` (when MAX adds it) is excluded.
+    Схема как у Telegram: `hash` подписывает отсортированный блок `key=value` ключом,
+    производным от токена бота, а `signature` (если MAX его добавляет) исключается.
     """
     if not bot_token.strip():
         raise LaunchNotConfigured("max bot token is not configured")
@@ -180,10 +180,10 @@ def vk_identity(
     now: int | None = None,
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> LaunchContext:
-    """Validate VK Mini App launch parameters (dev.vk.com/ru/mini-apps).
+    """Проверяет параметры запуска VK Mini App (dev.vk.com/ru/mini-apps).
 
-    VK signs every `vk_*` parameter with the app secret and passes the result as
-    `sign`; the signature is the base64 of HMAC-SHA256 over the sorted pairs.
+    ВК подписывает каждый параметр `vk_*` секретом приложения и отдаёт результат как
+    `sign`: base64 от HMAC-SHA256 по отсортированным парам.
     """
     if not app_secret.strip():
         raise LaunchNotConfigured("vk mini app secret is not configured")

@@ -23,11 +23,7 @@ class SberTextToSpeech:
         self._settings = settings
         self._owns_client = client is None
         self._client = client if client is not None else httpx.AsyncClient(verify=settings.tls_verify)
-        self._oauth = SberOAuthClient(
-            settings.sber_tts_auth_url,
-            self._client,
-            verify=settings.tls_verify,
-        )
+        self._oauth = SberOAuthClient(settings.sber_tts_auth_url, self._client)
         self._closed = False
 
     async def synthesize(

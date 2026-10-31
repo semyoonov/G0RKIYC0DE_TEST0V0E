@@ -73,27 +73,27 @@ def test_export_events_to_ics() -> None:
     assert cal.get("prodid") == "-//GORKYCODE//Gorky Voice Assistant//RU"
     assert cal.get("x-wr-timezone") == "Europe/Moscow"
 
-    # Verify VTIMEZONE
+    # Проверяем VTIMEZONE
     timezones = [c for c in cal.subcomponents if c.name == "VTIMEZONE"]
     assert len(timezones) == 1
     assert timezones[0]["tzid"] == "Europe/Moscow"
 
-    # Verify VEVENTs
+    # Проверяем VEVENT
     vevents = [c for c in cal.subcomponents if c.name == "VEVENT"]
     assert len(vevents) == 2
 
-    # Check recurring meeting
+    # Проверяем повторяющуюся встречу
     ev1_comp = next(v for v in vevents if "Созвон с командой" in str(v.get("summary")))
     assert ev1_comp.get("rrule") is not None
     assert ev1_comp.get("rrule")["FREQ"] == ["WEEKLY"]
     assert b"FREQ=WEEKLY" in ev1_comp.get("rrule").to_ical()
     assert ev1_comp.get("status") == "CONFIRMED"
 
-    # Check VALARM in meeting
+    # Проверяем VALARM у встречи
     alarms = [c for c in ev1_comp.subcomponents if c.name == "VALARM"]
     assert len(alarms) == 1
     assert alarms[0].get("trigger").dt == -timedelta(minutes=15)
 
-    # Check completed task
+    # Проверяем выполненную задачу
     ev2_comp = next(v for v in vevents if "Купить кофе" in str(v.get("summary")))
     assert ev2_comp.get("status") == "COMPLETED"

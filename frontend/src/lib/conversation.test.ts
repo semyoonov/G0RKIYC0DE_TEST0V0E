@@ -103,7 +103,7 @@ describe("ConversationLoop", () => {
     expect(harness.sendUtterance).toHaveBeenCalledWith("поставь задачу", { closing: false });
     await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("speaking"));
 
-    // The next turn was opened muted while the answer was being requested.
+    // Следующий ход открыт приглушённым, пока запрашивался ответ.
     expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2);
     expect(harness.voice.beginTurn.mock.calls[1][0]).toEqual({ muted: true });
     expect(harness.voice.unmute).not.toHaveBeenCalled();
@@ -113,7 +113,7 @@ describe("ConversationLoop", () => {
     await committing;
     await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("listening"));
 
-    // Same turn: neither the microphone nor the websocket is reopened.
+    // Тот же ход: ни микрофон, ни веб-сокет не переоткрываются.
     expect(harness.voice.beginTurn).toHaveBeenCalledTimes(2);
     expect(harness.voice.unmute).toHaveBeenCalledTimes(1);
     expect(harness.delay).not.toHaveBeenCalled();
@@ -167,7 +167,7 @@ describe("ConversationLoop", () => {
     await vi.waitFor(() => expect(harness.sendUtterance).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(harness.loop.currentPhase).toBe("speaking"));
     expect(harness.sendUtterance).toHaveBeenCalledWith("Спасибо!", { closing: true });
-    // A farewell will not listen again, so no muted turn is opened for it.
+    // После прощания слушать нечего, поэтому приглушённый ход не открывается.
     expect(harness.voice.beginTurn).toHaveBeenCalledTimes(1);
     expect(harness.voice.unmute).not.toHaveBeenCalled();
 
@@ -318,7 +318,7 @@ describe("ConversationLoop", () => {
 
     const committing = harness.loop.commit();
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-    // Barge-in can settle the playback gate before the reply is even rendered.
+    // Перебивание может закрыть воспроизведение раньше, чем ответ отрисован.
     harness.loop.notifyPlaybackFinished();
     releaseSend({ ok: true, hasAudio: true });
     await committing;

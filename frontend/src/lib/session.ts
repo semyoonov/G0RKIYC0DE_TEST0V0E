@@ -67,8 +67,8 @@ function fail(error: unknown, fallback: SessionFallback | null = state.fallback)
 }
 
 async function openPlatformSession(platform: Platform, payload: string): Promise<AuthSession> {
-  // A mini-app must prove its own platform identity; do not silently retain a
-  // token from a different client if the launch validation fails.
+  // Мини-приложение обязано подтвердить свою платформенную личность: токен
+  // другого клиента не сохраняется молча, если проверка запуска не прошла.
   clearSessionToken();
   patch({ status: "loading", error: null });
   try {
@@ -91,7 +91,7 @@ async function runBootstrap(): Promise<void> {
   patch({ status: "loading", error: null });
   try {
     const launch = detectLaunch();
-    // In a mini app, signed platform launch data identifies the user.
+    // В мини-приложении пользователя определяют подписанные данные запуска.
     if (launch.platform !== "web" && launch.payload) {
       await openPlatformSession(launch.platform, launch.payload);
       return;
@@ -162,19 +162,19 @@ export function getToken(): string | null {
   return readSessionToken();
 }
 
-/** Registers the current account, keeping its tasks and linked platforms. */
+/** Регистрирует текущий аккаунт, сохраняя его задачи и привязанные платформы. */
 export async function registerWithPassword(email: string, password: string): Promise<AuthSession> {
   applySession(await registerAccount(email.trim(), password));
   return state.session as AuthSession;
 }
 
-/** Signs in to an existing account and links the current platform to it. */
+/** Входит в существующий аккаунт и привязывает к нему текущую платформу. */
 export async function loginWithPassword(email: string, password: string): Promise<AuthSession> {
   applySession(await loginAccount(email.trim(), password));
   return state.session as AuthSession;
 }
 
-/** Leaves the account behind and continues in a new guest session. */
+/** Выходит из аккаунта и продолжает в новой гостевой сессии. */
 export async function leaveAccount(): Promise<void> {
   clearSessionToken();
   patch({ status: "loading", session: null, error: null, fallback: null });

@@ -113,9 +113,9 @@ function readStorageValue(storage: StorageLike | null | undefined, key: string):
 }
 
 /**
- * The MAX bridge puts the URL-encoded launch string after `#WebAppData=`. The
- * value is returned without percent-decoding so the server decodes it exactly
- * once when it validates the signature.
+ * Мост MAX кладёт строку запуска в URL-кодировке после `#WebAppData=`. Значение
+ * возвращается без percent-декодирования, чтобы сервер раскодировал его ровно
+ * один раз при проверке подписи.
  */
 export function readMaxFragmentPayload(fragment: string | null | undefined): string | null {
   if (!fragment) return null;
@@ -184,7 +184,7 @@ function readPlatformRuntime(): PlatformRuntime {
   };
 }
 
-/** Announces the mini app to its client exactly once; plain web pages are left alone. */
+/** Объявляет мини-приложение его клиенту ровно один раз; обычные веб-страницы не трогает. */
 export function initializePlatform(
   platform: Platform,
   runtime: PlatformRuntime = readPlatformRuntime(),
@@ -195,7 +195,7 @@ export function initializePlatform(
       app?.ready?.();
       app?.expand?.();
     } catch {
-      // Telegram SDK failures must not block the web fallback.
+      // Сбои Telegram SDK не должны блокировать веб-фолбэк.
     }
     return;
   }
@@ -204,7 +204,7 @@ export function initializePlatform(
     try {
       void Promise.resolve(runtime.sendVkInit?.()).catch(() => {});
     } catch {
-      // VK bridge is unavailable outside the VK client.
+      // Вне клиента VK мост недоступен.
     }
   }
 }

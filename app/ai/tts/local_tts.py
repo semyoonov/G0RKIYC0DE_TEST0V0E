@@ -18,10 +18,10 @@ _MP3_ARGS = ("-c:a", "libmp3lame", "-b:a", "64k", "-f", "mp3")
 
 
 class LocalTextToSpeech:
-    """Offline speech synthesis: espeak-ng speaks the text, ffmpeg wraps it in the requested container.
+    """Офлайн-синтез: espeak-ng озвучивает текст, ffmpeg упаковывает его в нужный контейнер.
 
-    It needs no credentials and no network, which keeps voice replies working while the
-    SaluteSpeech key is not provisioned; swapping `TTS_BACKEND` to `sber` switches back.
+    Ни ключей, ни сети не нужно — голосовые ответы работают, пока ключ SaluteSpeech не
+    выдан; переключение обратно — `TTS_BACKEND=sber`.
     """
 
     def __init__(

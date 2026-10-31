@@ -1,9 +1,8 @@
-"""Keep tool-call syntax out of what the user reads.
+"""Не даёт синтаксису вызова инструмента попасть в текст, который читает пользователь.
 
-GigaChat occasionally answers with a serialised function call in `content`
-instead of the `function_call` field, sometimes quoted with `<|superquote|>`
-tokens. Left alone, that text reaches the user and is replayed as dialogue
-history, which teaches the model to keep doing it.
+GigaChat иногда отвечает сериализованным вызовом функции в `content`, а не в поле
+`function_call`, порой в кавычках `<|superquote|>`. Без обработки этот текст уходит
+пользователю и переигрывается в истории диалога — и модель закрепляет привычку.
 """
 
 from __future__ import annotations
@@ -51,7 +50,7 @@ def _parse_body(body: str) -> dict[str, Any] | None:
 
 
 def recover_calls(text: str) -> tuple[list[RecoveredCall], str]:
-    """Split a leaked function call out of the reply text."""
+    """Отделяет утёкший вызов функции от текста ответа."""
     calls: list[RecoveredCall] = []
     if not text:
         return calls, text
@@ -65,7 +64,7 @@ def recover_calls(text: str) -> tuple[list[RecoveredCall], str]:
 
 
 def sanitize_reply(text: str) -> str:
-    """Remove call syntax, service tokens, English narration and markdown noise."""
+    """Убирает синтаксис вызовов, служебные токены, английские пояснения и разметку."""
     if not text:
         return ""
     cleaned = _CALL_BLOCK.sub(" ", text)

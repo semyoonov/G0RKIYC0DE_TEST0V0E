@@ -195,7 +195,7 @@ async def handle_callback_payload(
     peer_id: int,
     event_id: str | None = None,
 ) -> None:
-    """Buttons on event cards carry the done action; answer them and confirm in chat."""
+    """Кнопки на карточках несут действие «готово»: обрабатываем и подтверждаем в чате."""
     event_id_value = _event_id_from_payload(payload)
     if event_id_value is None:
         return

@@ -12,7 +12,7 @@ _TIMEOUT_SECONDS = 5.0
 
 
 async def fetch_display_name(access_token: str, user_id: str) -> str | None:
-    """VK launch parameters carry only the numeric id; the service token adds a human name."""
+    """В параметрах запуска ВК только числовой id; человеческое имя добавляет сервисный токен."""
     if not access_token.strip() or not user_id.strip():
         return None
     try:

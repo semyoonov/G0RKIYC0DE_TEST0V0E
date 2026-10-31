@@ -42,7 +42,7 @@ class VoskSpeechRecognizer:
         return text
 
     async def warmup(self) -> bool:
-        """Load the model ahead of the first request; False when it is not installed."""
+        """Загружает модель до первого запроса; False, если она не установлена."""
         if not self.available:
             return False
         await self._ensure_model()
@@ -107,10 +107,10 @@ class VoskSpeechRecognizer:
 
 
 class StreamingSession:
-    """Incremental recognition of one live PCM stream.
+    """Потоковое распознавание одного живого PCM-потока.
 
-    KaldiRecognizer is not thread-safe, so all calls happen in the session's single
-    worker task; frames are queued and the bounded queue provides backpressure.
+    KaldiRecognizer не потокобезопасен, поэтому все вызовы идут в одной рабочей задаче
+    сессии: кадры копятся в очереди, а её ограниченный размер даёт обратное давление.
     """
 
     _FRAME_QUEUE_SIZE = 50
@@ -127,10 +127,6 @@ class StreamingSession:
         self._segments: list[str] = []
         self._last_partial = ""
         self._finished = False
-
-    @property
-    def received_bytes(self) -> int:
-        return self._received
 
     async def start(self) -> None:
         if self._worker is not None:

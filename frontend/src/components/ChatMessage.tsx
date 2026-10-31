@@ -7,10 +7,10 @@ interface ChatMessageProps {
   entry: ChatEntry;
   timezone: string;
   autoPlayAudio?: boolean;
-  /** Speech for this reply is being generated right now. */
+  /** Речь для этого ответа генерируется прямо сейчас. */
   synthesizing?: boolean;
   onComplete: (eventId: number) => Promise<void> | void;
-  /** Called with the entry id when the reply audio finishes. */
+  /** Вызывается с id реплики, когда звук ответа заканчивается. */
   onReplyAudioEnd?: (entryId: string) => void;
 }
 
@@ -43,12 +43,12 @@ export function ChatMessage({
   }
 
   const { reply } = entry;
-  // A failed or clarifying turn keeps its intent but carries no events; label only real outcomes.
+  // Неудачный или уточняющий ход сохраняет intent, но событий не несёт; подписываем только реальные исходы.
   const changed = reply.events.length > 0 || reply.intent === "delete_event";
   const action = reply.intent && changed ? ACTION_LABELS[reply.intent] : undefined;
   const showCards = reply.events.length > 0 && reply.intent !== "delete_event";
-  // Speech can arrive after the text (separate /api/speech request) or inline
-  // with an older reply payload; both are rendered the same way.
+  // Речь приходит либо после текста (отдельный запрос /api/speech), либо внутри
+  // старого ответа; отрисовка в обоих случаях одна и та же.
   const audio =
     entry.audio ?? (reply.audio ? { data: reply.audio, mime: reply.audio_mime } : null);
 

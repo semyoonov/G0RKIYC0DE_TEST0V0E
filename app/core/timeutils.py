@@ -15,7 +15,7 @@ def ensure_aware(value: datetime) -> datetime:
 
 
 def to_db(value: datetime) -> datetime:
-    """Naive UTC value as stored in the database."""
+    """Naive-UTC значение в том виде, в каком оно лежит в базе."""
     aware = value if value.tzinfo else value.replace(tzinfo=UTC)
     return aware.astimezone(UTC).replace(tzinfo=None)
 
@@ -38,7 +38,7 @@ def start_of_day(value: datetime, tz: ZoneInfo) -> datetime:
 
 
 def period_bounds(period: Period, tz: ZoneInfo, now: datetime | None = None, days: int = 7) -> tuple[datetime, datetime]:
-    """Aware [start, end) bounds of a named period, expressed in the user timezone."""
+    """Границы периода [начало, конец) в часовом поясе пользователя."""
     current = ensure_aware(now or datetime.now(UTC)).astimezone(tz)
     today = start_of_day(current, tz)
     if period is Period.TODAY:

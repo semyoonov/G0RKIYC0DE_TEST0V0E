@@ -199,17 +199,17 @@ async def test_delete_and_complete_by_query_without_id(executor, session, user):
     assert not created.failed
     event_id = created.events[0].id
 
-    # 1. Search with natural phrase
+    # 1. Поиск по живой фразе
     search_res = await executor.execute("search_events", {"query": "удали напоминание поесть каждый вторник"})
     assert not search_res.failed
     assert "поесть" in search_res.content
 
-    # 2. Complete by query
+    # 2. Завершение по запросу
     completed = await executor.execute("complete_event", {"query": "поесть"})
     assert not completed.failed
     assert "Отметил как выполнено" in completed.content
 
-    # 3. Delete by natural deletion query
+    # 3. Удаление по живой формулировке
     deleted = await executor.execute("delete_event", {"query": "удали напоминание поесть каждый вторник"})
     assert not deleted.failed
     assert "Удалил" in deleted.content
@@ -218,7 +218,7 @@ async def test_delete_and_complete_by_query_without_id(executor, session, user):
 
 
 async def test_create_task_with_rrule_aligns_to_weekday(executor):
-    # Sunday November 1st 2026:
+    # Воскресенье 1 ноября 2026:
     sunday = datetime(2026, 11, 1, 16, 0, tzinfo=MOSCOW)
     assert sunday.weekday() == 6  # Sunday
 
@@ -233,7 +233,7 @@ async def test_create_task_with_rrule_aligns_to_weekday(executor):
     )
     assert not created.failed
     ev = created.events[0]
-    # Should be aligned to Tuesday (weekday 1), Nov 3rd 2026!
+    # Должно прилипнуть ко вторнику (день недели 1), 3 ноября 2026!
     assert ev.starts_at.weekday() == 1
     assert ev.starts_at.day == 3
     assert ev.starts_at.month == 11

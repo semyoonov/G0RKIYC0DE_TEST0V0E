@@ -32,7 +32,7 @@ DONE_CONFIRMATION_TEXT = "Отмечено как выполнено: {title}"
 
 
 async def send_answer(message: Message, response: AssistantResponse, tz: ZoneInfo) -> None:
-    """The assistant sentence as its own plain message, then one card message."""
+    """Сначала фраза ассистента отдельным сообщением, затем карточки."""
     text = response.text.strip()
     if text:
         await message.answer(text)

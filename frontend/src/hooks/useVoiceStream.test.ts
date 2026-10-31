@@ -46,7 +46,7 @@ describe("useVoiceStream microphone constraints", () => {
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(getUserMedia).toHaveBeenCalledWith(PREFERRED_CONSTRAINTS);
 
-    // The microphone is acquired once for the whole dialogue.
+    // Микрофон захватывается один раз на весь диалог.
     await act(async () => {
       expect(await result.current.openMicrophone()).toBe(true);
     });

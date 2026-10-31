@@ -22,7 +22,7 @@ function fakeClock(start = 1_000) {
   };
 }
 
-/** Feeds `count` frames of `energy` spaced by the frame interval. */
+/** Подаёт `count` кадров с энергией `energy` с шагом в один кадр. */
 function feed(detector: BargeInDetector, clock: ReturnType<typeof fakeClock>, energy: number, count: number, step = 40) {
   let fired = false;
   for (let index = 0; index < count; index += 1) {

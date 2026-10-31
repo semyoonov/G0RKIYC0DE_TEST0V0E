@@ -1,7 +1,7 @@
 /**
- * A hands-free dialogue can be closed by a short spoken goodbye. The backend
- * accepts a `closing` flag on the final chat message so it can answer with a
- * farewell instead of asking a follow-up question.
+ * Диалог без рук можно закрыть коротким прощанием вслух. Бэкенд принимает
+ * флаг `closing` в последнем сообщении чата и отвечает прощанием, а не
+ * встречным вопросом.
  */
 export const FAREWELL_MAX_WORDS = 4;
 
@@ -29,7 +29,7 @@ const FAREWELL_PHRASES: ReadonlyArray<ReadonlyArray<string>> = [
   ["это", "все"],
 ];
 
-/** Lower-cased words without punctuation, with ё folded to е. */
+/** Слова в нижнем регистре, без пунктуации, «ё» приведена к «е». */
 export function farewellWords(text: string): string[] {
   return text
     .toLowerCase()
@@ -49,8 +49,8 @@ function containsPhrase(words: readonly string[], phrase: readonly string[]): bo
 }
 
 /**
- * True for a short farewell such as «спасибо», «до свидания» or «на этом всё».
- * Longer sentences are never treated as a closing utterance.
+ * true для короткого прощания: «спасибо», «до свидания», «на этом всё».
+ * Длинные фразы закрывающей репликой не считаются никогда.
  */
 export function isFarewellUtterance(text: string): boolean {
   const words = farewellWords(text);

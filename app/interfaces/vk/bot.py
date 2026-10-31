@@ -16,11 +16,10 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 _RESTART_DELAYS = (5, 15, 30, 60)
-TIMEOUT_REPLY = "Не получилось ответить, попробуйте ещё раз."
 
 
 class VkBot:
-    """Long-polling VK bot wired to the assistant service."""
+    """Бот ВК на long polling поверх сервиса ассистента."""
 
     def __init__(
         self,

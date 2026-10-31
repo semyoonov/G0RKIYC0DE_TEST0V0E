@@ -59,7 +59,7 @@ export default function App() {
   // ещё не выбранный голос заменяется первым из каталога, как его рисует <select>.
   const activeVoice = voices.includes(voiceName) ? voiceName : (voices[0] ?? "");
 
-  /** A newer turn supersedes any speech still being synthesised. */
+  /** Новый ход отменяет речь, которая ещё синтезируется. */
   const nextSpeechSignal = useCallback(() => {
     speechAbortRef.current?.abort();
     const controller = new AbortController();
@@ -101,7 +101,7 @@ export default function App() {
   });
   conversationPhaseRef.current = conversation.phase;
 
-  // Leaving the dialogue (or unmounting) cancels speech that is still loading.
+  // Выход из диалога (и размонтирование) отменяет ещё не загруженную речь.
   useEffect(() => {
     if (conversation.active) return;
     speechAbortRef.current?.abort();

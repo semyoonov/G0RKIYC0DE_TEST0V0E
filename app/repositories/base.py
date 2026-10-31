@@ -1,6 +1,5 @@
 from typing import ClassVar, Generic, TypeVar
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 ModelT = TypeVar("ModelT")
@@ -24,8 +23,3 @@ class BaseRepository(Generic[ModelT]):
     async def delete(self, entity: ModelT) -> None:
         await self.session.delete(entity)
         await self.session.commit()
-
-    async def list_all(self, limit: int = 100) -> list[ModelT]:
-        statement = select(self.model).limit(limit)
-        result = await self.session.execute(statement)
-        return list(result.scalars().all())

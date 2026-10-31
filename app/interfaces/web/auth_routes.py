@@ -44,7 +44,7 @@ def bearer_token(authorization: str | None) -> str | None:
 
 
 async def identity_from_request(request: Request, auth: AuthService | None) -> Identity | None:
-    """The identity proven by a valid bearer token, or None when unauthenticated."""
+    """Идентичность, доказанная валидным bearer-токеном, или None."""
     if auth is None:
         return None
     if "identity" in getattr(request.state, "auth_cache", {}):
@@ -66,7 +66,7 @@ async def identity_from_request(request: Request, auth: AuthService | None) -> I
 
 
 def _current_identity(request: Request, auth: AuthService) -> Identity | None:
-    """The signed identity of the caller, used to attach an email to its account."""
+    """Подписанная идентичность вызывающего — к ней привязывается почта."""
     token = bearer_token(request.headers.get("authorization"))
     if not token:
         return None

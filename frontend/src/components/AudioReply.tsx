@@ -7,7 +7,7 @@ interface AudioReplyProps {
   data: string;
   mime: string | null;
   autoPlay?: boolean;
-  /** Fires once when playback finishes, fails, or cannot start. */
+  /** Срабатывает один раз, когда воспроизведение закончилось, сорвалось или не началось. */
   onComplete?: () => void;
 }
 
@@ -38,7 +38,7 @@ export function AudioReply({ data, mime, autoPlay = true, onComplete }: AudioRep
     (audio: HTMLAudioElement) => {
       try {
         const started = audio.play();
-        // Older engines and jsdom can return undefined instead of a promise.
+        // Старые движки и jsdom могут вернуть undefined вместо промиса.
         if (started && typeof started.catch === "function") {
           void started.catch(() => settle());
         }
@@ -72,7 +72,7 @@ export function AudioReply({ data, mime, autoPlay = true, onComplete }: AudioRep
   }, [url, autoPlay, requestPlayback]);
 
   useEffect(() => {
-    // Nothing will be played, so a hands-free turn must not wait for it.
+    // Воспроизведения не будет, поэтому ход без рук не должен его ждать.
     if (!url || autoPlay) return;
     settle();
   }, [url, autoPlay, settle]);
@@ -81,7 +81,7 @@ export function AudioReply({ data, mime, autoPlay = true, onComplete }: AudioRep
     clearFallback();
     const duration = audioRef.current?.duration;
     if (duration === undefined || !Number.isFinite(duration) || duration <= 0) return;
-    // A stalled element must not freeze the conversation forever.
+    // Зависший элемент не должен навсегда замораживать диалог.
     fallbackTimer.current = window.setTimeout(settle, duration * 1000 + 2000);
   };
 
@@ -111,7 +111,7 @@ export function AudioReply({ data, mime, autoPlay = true, onComplete }: AudioRep
         onEnded={settle}
         onError={settle}
         onPlay={startFallbackTimer}
-        // A barge-in pause must not leave the safety timer armed.
+        // Пауза из-за перебивания не должна оставлять страховочный таймер взведённым.
         onPause={clearFallback}
       />
     </div>

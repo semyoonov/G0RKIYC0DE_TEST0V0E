@@ -39,10 +39,10 @@ FetchAudio = Callable[[str, str], Awaitable[bytes]]
 
 
 class CloudTextToSpeech:
-    """SaluteSpeech over the Cloud.ru realtime gateway.
+    """SaluteSpeech через realtime-шлюз Cloud.ru.
 
-    The gateway answers with 24 kHz PCM deltas on a websocket; ffmpeg wraps the
-    collected stream into the container the client asked for.
+    Шлюз отдаёт PCM 24 кГц дельтами по websocket; ffmpeg упаковывает собранный поток
+    в контейнер, который запросил клиент.
     """
 
     def __init__(

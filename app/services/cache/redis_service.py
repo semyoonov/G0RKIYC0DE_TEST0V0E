@@ -11,10 +11,11 @@ log = get_logger(__name__)
 
 
 class CacheService:
-    """JSON cache with conversation history.
+    """JSON-кеш с историей диалога.
 
-    Falls back to process memory when Redis is unreachable so local demo mode works
-    without the container; every Redis failure is reported once and then ignored.
+    Когда Redis недоступен, переходит на память процесса — так локальный демо-режим
+    работает без контейнера; о каждом сбое Redis пишется одно предупреждение, дальше он
+    игнорируется.
     """
 
     def __init__(
@@ -124,15 +125,6 @@ class CacheService:
         else:
             raw_items = list(self._history.get(key, ()))[-limit:]
         return [json.loads(item) for item in raw_items]
-
-    async def clear_history(self, key: str) -> None:
-        self._history.pop(key, None)
-        client = await self._get_client()
-        if client is not None:
-            try:
-                await client.delete(key)
-            except Exception as error:  # noqa: BLE001
-                self._disable(error)
 
     async def close(self) -> None:
         if self._client is not None and not self._redis_failed:

@@ -6,8 +6,8 @@ import App from "./App";
 import { clearSpeechCache } from "./lib/api";
 import { bootstrapSession } from "./lib/session";
 
-// The microphone is replaced by a controllable stub: jsdom has no audio capture,
-// and the one-shot path must end with an audio blob, like browsers without streaming.
+// Микрофон заменён управляемым стабом: в jsdom нет захвата звука, а одноразовый
+// путь должен заканчиваться аудио-blob, как в браузерах без стриминга.
 vi.mock("./hooks/useVoiceStream", async () => {
   const { useMemo, useState } = await import("react");
   return {
@@ -96,7 +96,7 @@ function bodiesOf(url: string): Array<Record<string, unknown>> {
     .map((call) => JSON.parse(String(call.init?.body)) as Record<string, unknown>);
 }
 
-/** The voice the server will actually use: an omitted field means its own default. */
+/** Голос, который реально использует сервер: отсутствующее поле означает его собственный дефолт. */
 function requestedVoice(body: Record<string, unknown> | undefined): string {
   return typeof body?.voice === "string" ? body.voice : "<голос сервера по умолчанию>";
 }

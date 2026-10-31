@@ -170,7 +170,7 @@ class Settings(BaseSettings):
         return (self.mini_app_public_url or self.web_public_url).rstrip("/")
 
     def mini_app_link(self, platform: Platform) -> str | None:
-        """Public URL that opens the assistant on one platform."""
+        """Публичный адрес, открывающий ассистента на платформе."""
         if platform is Platform.TELEGRAM:
             username = self.telegram_bot_username.strip().lstrip("@")
             if not username:

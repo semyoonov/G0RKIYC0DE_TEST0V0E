@@ -5,7 +5,7 @@ from app.domain.enums import PLATFORM_TITLES, Platform
 
 @dataclass(frozen=True, slots=True)
 class Identity:
-    """A user as one specific interface knows them: platform plus that platform's id."""
+    """Пользователь глазами одной платформы: платформа и её собственный идентификатор."""
 
     platform: Platform
     external_id: str

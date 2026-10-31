@@ -164,7 +164,7 @@ def _find_audio(attachments: list[Any]) -> dict[str, Any] | None:
 
 
 def done_buttons(events: Sequence[EventRead]) -> list[list[dict[str, Any]]] | None:
-    """MAX inline keyboard rows for the pending events of a card message."""
+    """Ряды инлайн-клавиатуры MAX для записей, которые ещё ждут действия."""
     rows: list[list[dict[str, Any]]] = []
     for event in pending_events(events):
         button = done_button(event)

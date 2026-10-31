@@ -157,7 +157,7 @@ class EventRepository(BaseRepository[Event]):
         return result.scalar_one_or_none()
 
     async def create(self, user_id: int, data: EventCreate, *, commit: bool = True) -> Event:
-        """Insert an event; `commit=False` keeps it in the caller's transaction."""
+        """Вставляет запись; `commit=False` оставляет её в транзакции вызывающего."""
         event = Event(
             user_id=user_id,
             type=data.type,
@@ -260,13 +260,13 @@ class EventRepository(BaseRepository[Event]):
                 )
             )
 
-        # All words match: precise, so a wide window is cheap.
+        # Совпали все слова: запрос точный, поэтому широкое окно недорого.
         statement = select(Event).where(*base_filter, and_(*token_conditions)).limit(max(limit * 10, 100))
         result = await self.session.execute(statement)
         matches = list(result.scalars().all())
 
         if not matches and len(tokens) > 1:
-            # Fallback when the query carries words the record does not (weekdays, recurrence).
+            # Запасной вариант, когда в запросе есть слова, которых нет в записи (дни недели, повторы).
             statement = select(Event).where(*base_filter, or_(*token_conditions)).limit(max(limit * 20, 400))
             result = await self.session.execute(statement)
             matches = list(result.scalars().all())
@@ -282,7 +282,7 @@ class EventRepository(BaseRepository[Event]):
         query_lower: str,
         wanted_type: EventType | None,
     ) -> list[Event]:
-        """Order by how well the record matches, never by how recent it is."""
+        """Сортировка по тому, насколько запись подходит, а не по свежести."""
         reference = utcnow().replace(tzinfo=None)  # stored timestamps are naive UTC
 
         def score(event: Event) -> tuple[int, int, float]:
@@ -304,8 +304,8 @@ class EventRepository(BaseRepository[Event]):
                 value += 3
             if event.status is EventStatus.PENDING:
                 value += 1
-            # Among equally relevant records prefer the one nearest in time, not the furthest:
-            # "перенеси встречу с командой" must not grab next month's recurring stand-up.
+            # Из одинаково релевантных берём ближайшую по времени, а не самую дальнюю:
+            # «перенеси встречу с командой» не должна хватать стендап следующего месяца.
             if event.starts_at is None:
                 distance = 1e12
             else:

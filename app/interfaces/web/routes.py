@@ -91,7 +91,7 @@ _FALLBACK_HTML = """<!doctype html>
 
 
 async def _conversation_owner(request: Request, auth: AuthService | None) -> tuple[Platform, str]:
-    """Return the platform identity proven by a valid session, never a client-supplied ID."""
+    """Идентичность из сессии, а не из id, присланного клиентом."""
     identity = await identity_from_request(request, auth)
     if identity is None:
         raise HTTPException(status_code=401, detail="Войдите в аккаунт, чтобы продолжить.")
@@ -167,7 +167,7 @@ def build_router(
     @router.post("/api/telemetry")
     async def telemetry(payload: TelemetryPayload, request: Request) -> dict[str, Any]:
         peer = request.client.host if request.client else "-"
-        # Only the shape of the event is logged: no user text ever reaches this endpoint.
+        # Логируется только форма события: текст пользователя сюда не попадает.
         log.info(
             "client telemetry: event=%s phase=%s detail=%s peer=%s",
             payload.event,

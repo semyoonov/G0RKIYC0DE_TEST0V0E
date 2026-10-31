@@ -44,11 +44,11 @@ __all__ = [
 
 
 class EmailAuthError(ValueError):
-    """The email address cannot be used for this account."""
+    """Адрес нельзя использовать для этого аккаунта."""
 
 
 class CredentialsError(EmailAuthError):
-    """The email and password pair do not match a registered account."""
+    """Пара почта и пароль не совпадает с зарегистрированным аккаунтом."""
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+$")
@@ -63,7 +63,7 @@ def normalize_email(value: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Session:
-    """The outcome of a successful login: who the visitor is and their account."""
+    """Результат успешного входа: кто посетитель и какой у него аккаунт."""
 
     identity: Identity
     user_id: int
@@ -87,7 +87,7 @@ class Session:
 
 
 class AuthService:
-    """Turns a platform launch into an account, and links accounts across platforms."""
+    """Превращает запуск платформы в аккаунт и связывает аккаунты между платформами."""
 
     def __init__(
         self,
@@ -102,7 +102,7 @@ class AuthService:
         self._tokens = SessionTokens(settings.session_secret, settings.session_ttl_seconds)
 
     def _accounts(self, session: AsyncSession) -> AccountRepository:
-        """Repository that fills a new account with sample plans when seeding is on."""
+        """Репозиторий, который при включённом сидинге наполняет новый аккаунт примерами."""
         hook = self._seed_demo_events if self._settings.demo_seed_enabled else None
         return AccountRepository(session, on_created=hook)
 
@@ -118,7 +118,7 @@ class AuthService:
         return self._tokens
 
     def launch(self, platform: Platform, payload: str | None) -> LaunchContext:
-        """Validate platform launch data; raises LaunchError when it cannot be trusted."""
+        """Проверяет данные запуска; бросает LaunchError, если им нельзя верить."""
         now = int(self._clock())
         if platform is Platform.TELEGRAM:
             return telegram_identity(payload, self._settings.telegram_bot_token, now=now)
@@ -153,7 +153,7 @@ class AuthService:
         return self._session(context, user_id=user.id, linked=linked, email=email)
 
     async def open_guest_session(self) -> Session:
-        """Start an anonymous browser account, so the app works without a login prompt."""
+        """Гостевой аккаунт браузера: приложение работает без запроса входа."""
         identity = Identity(Platform.WEB, "guest-" + secrets.token_urlsafe(18))
         async with self._session_factory() as session:
             repository = self._accounts(session)
@@ -182,10 +182,10 @@ class AuthService:
         password: str,
         identity: Identity | None = None,
     ) -> Session:
-        """Create an email login, keeping the events of the identity that asks for it.
+        """Заводит вход по почте, сохраняя записи той идентичности, что просит.
 
-        A bot or mini-app account has no email; registering from inside it attaches
-        the address to that same account, so the web version opens the same tasks.
+        У аккаунта бота или мини-приложения почты нет; регистрация изнутри привязывает
+        адрес к тому же аккаунту, поэтому веб-версия открывает те же задачи.
         """
         normalized = normalize_email(email)
         password_hash = hash_password(password)
@@ -233,7 +233,7 @@ class AuthService:
         password: str,
         identity: Identity | None = None,
     ) -> Session:
-        """Sign in with a password and bind the current platform identity to the account."""
+        """Вход по паролю с привязкой текущей платформенной идентичности."""
         normalized = normalize_email(email)
         async with self._session_factory() as session:
             repository = self._accounts(session)
@@ -266,7 +266,7 @@ class AuthService:
         identity: Identity | None,
         web_identity_id: str,
     ) -> User:
-        """The account that will own the new email: the caller's own, or a fresh one."""
+        """Аккаунт, который получит новую почту: свой или новый."""
         if identity is not None:
             return await repository.resolve(identity, self._settings.timezone, commit=False)
         user = User(
@@ -286,10 +286,10 @@ class AuthService:
         email_row: UserEmail,
         identity: Identity | None,
     ) -> tuple[User, UserEmail]:
-        """Claim an email left over from the removed code login.
+        """Забирает адрес, оставшийся от удалённого входа по кодам.
 
-        Only the account that already holds the address can take it over: the old
-        flow verified ownership, and this one must not hand it to a stranger.
+        Только аккаунт, который уже держит этот адрес, может его получить: прежний сценарий
+        проверял владение, и этот не должен отдавать адрес постороннему.
         """
         if email_row.password_hash:
             raise EmailAuthError("Этот адрес уже зарегистрирован. Войдите с паролем.")

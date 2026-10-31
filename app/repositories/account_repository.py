@@ -18,7 +18,7 @@ CreatedHook = Callable[[AsyncSession, User], Awaitable[None]]
 
 
 class AccountRepository(BaseRepository[User]):
-    """Resolves platform identities to the account row that owns the events."""
+    """Сводит платформенные идентичности к строке аккаунта, которой принадлежат записи."""
 
     model = User
 
@@ -33,10 +33,10 @@ class AccountRepository(BaseRepository[User]):
         *,
         commit: bool = True,
     ) -> User:
-        """Find or create the owner of an identity.
+        """Находит или создаёт владельца идентичности.
 
-        Set commit=False when this lookup is part of a larger transaction, such as
-        registering an email and merging accounts atomically.
+        `commit=False` нужен, когда поиск — часть большой транзакции, например регистрации
+        почты с атомарным слиянием аккаунтов.
         """
         user = await self._by_identity(identity.platform, identity.external_id)
         if user is not None:
@@ -78,10 +78,10 @@ class AccountRepository(BaseRepository[User]):
         return list(unique.values())
 
     async def attach(self, target: User, identity: Identity, *, commit: bool = True) -> User:
-        """Bind an identity to target, merging the identity's entire old account if needed.
+        """Привязывает идентичность к target, при необходимости слив весь её прежний аккаунт.
 
-        The merge moves events, email identities and all other platform links. `commit=False`
-        lets a higher-level service combine this operation with a credentials update.
+        Слияние переносит записи, почтовые идентичности и остальные платформенные привязки.
+        `commit=False` позволяет сервису объединить это с обновлением учётных данных.
         """
         target_primary = (target.platform, target.external_id)
         identity_key = (identity.platform, identity.external_id)
@@ -112,7 +112,7 @@ class AccountRepository(BaseRepository[User]):
         return target
 
     async def _owner_for_identity(self, identity: Identity) -> User | None:
-        """Find the account that currently owns an identity, primary or linked."""
+        """Аккаунт, которому идентичность принадлежит сейчас — основная или привязанная."""
         owner = await self._by_identity(identity.platform, identity.external_id)
         if owner is not None:
             return owner
@@ -122,12 +122,12 @@ class AccountRepository(BaseRepository[User]):
         return await self.session.get(User, link.user_id)
 
     async def _merge_users(self, source: User, target: User) -> None:
-        """Move all data and identities from source to target in the current transaction."""
+        """Переносит все данные и привязки из source в target в текущей транзакции."""
         await self.session.execute(
             update(Event).where(Event.user_id == source.id).values(user_id=target.id)
         )
-        # If a source account had already been email-authenticated, keep its email
-        # address too. UserEmail rows are account aliases, not owned by a platform.
+        # Если исходный аккаунт уже был подтверждён почтой, сохраняем и адрес:
+        # строки UserEmail — псевдонимы аккаунта, а не собственность платформы.
         await self.session.execute(
             update(UserEmail).where(UserEmail.user_id == source.id).values(user_id=target.id)
         )

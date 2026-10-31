@@ -16,7 +16,7 @@ _KEY_LENGTH = 32
 
 
 class PasswordError(ValueError):
-    """The password does not meet the minimum requirements."""
+    """Пароль не проходит минимальные требования."""
 
 
 def validate_password(password: str) -> str:
@@ -28,7 +28,7 @@ def validate_password(password: str) -> str:
 
 
 def hash_password(password: str) -> str:
-    """Salted scrypt digest, self-describing so the cost factors can be raised later."""
+    """Склеенный scrypt-дайджест: параметры стоимости записаны в нём самом, их можно поднять."""
     salt = secrets.token_bytes(16)
     digest = hashlib.scrypt(
         validate_password(password).encode("utf-8"),
@@ -42,7 +42,7 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, stored: str | None) -> bool:
-    """Constant-time check of a password against a stored digest."""
+    """Сравнение пароля с дайджестом за постоянное время."""
     if not stored:
         return False
     try:

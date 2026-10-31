@@ -19,12 +19,11 @@ class _CachedToken:
 
 
 class SberOAuthClient:
-    """Access tokens for Sber APIs (GigaChat, SaluteSpeech) sharing one OAuth endpoint."""
+    """Токены доступа для API Сбера (GigaChat, SaluteSpeech) с общим OAuth-эндпоинтом."""
 
-    def __init__(self, auth_url: str, client: httpx.AsyncClient, verify: bool | str = True) -> None:
+    def __init__(self, auth_url: str, client: httpx.AsyncClient) -> None:
         self._auth_url = auth_url
         self._client = client
-        self._verify = verify
         self._tokens: dict[str, _CachedToken] = {}
 
     async def get_token(self, credentials: str, scope: str) -> str:

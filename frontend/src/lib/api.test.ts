@@ -156,10 +156,10 @@ describe("postSpeech cache", () => {
     expect(second).toEqual(first);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Another voice is a different answer.
+    // Другой голос — другой ответ.
     await postSpeech("Готово", "v2");
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    // Another text is a different answer.
+    // Другой текст — другой ответ.
     await postSpeech("Другое", "v1");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
@@ -214,7 +214,7 @@ describe("reportTelemetry", () => {
 
     const body = requestBody(requestAt(0).init);
     expect(String(body.detail).length).toBeLessThan(200);
-    // The rejection must be swallowed instead of surfacing as an unhandled one.
+    // Отказ должен быть проглочен, а не всплыть необработанным.
     await Promise.resolve();
   });
 

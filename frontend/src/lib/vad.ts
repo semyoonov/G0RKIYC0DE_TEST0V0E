@@ -1,17 +1,17 @@
 /**
- * Voice activity helpers shared by the capture hook and the conversation
- * loop. Everything here is pure and time is always passed in explicitly, so
- * the auto-commit decision can be tested with synthetic energies and a fake
- * clock instead of a real microphone.
+ * Помощники определения речевой активности, общие для хука захвата и цикла
+ * диалога. Всё здесь чистое, время всегда передаётся явно, поэтому решение об
+ * автозавершении проверяется на синтетических энергиях и поддельных часах, без
+ * настоящего микрофона.
  */
 
-/** RMS level (0..1) that counts as speech for a 16-bit PCM frame. */
+/** Уровень RMS (0..1), начиная с которого кадр 16-битного PCM считается речью. */
 export const VAD_ENERGY_THRESHOLD = 0.01;
 
-/** Silence after the last voiced frame before a turn is committed. */
+/** Тишина после последнего речевого кадра, по истечении которой ход завершается. */
 export const VAD_SILENCE_MS = 2500;
 
-/** RMS energy of an interleaved mono 16-bit PCM frame. */
+/** Энергия RMS кадра моно 16-битного PCM. */
 export function pcm16Energy(buffer: ArrayBuffer): number {
   const samples = new Int16Array(buffer);
   if (samples.length === 0) return 0;
@@ -33,9 +33,8 @@ export interface AutoCommitOptions {
 }
 
 /**
- * Tracks one listening turn: has the user spoken, has the server produced a
- * partial transcript, and has the silence window elapsed since the last
- * voiced frame.
+ * Ведёт один ход прослушивания: говорил ли пользователь, пришла ли от сервера
+ * промежуточная расшифровка и истекло ли окно тишины с последнего речевого кадра.
  */
 export class AutoCommitDetector {
   readonly threshold: number;
@@ -68,7 +67,7 @@ export class AutoCommitDetector {
     this.partial = (text ?? "").trim();
   }
 
-  /** Records a frame; returns true when the frame was loud enough to be speech. */
+  /** Учитывает кадр; возвращает true, если его громкости хватило на речь. */
   noteEnergy(energy: number, now: number): boolean {
     if (!Number.isFinite(now) || !isVoicedEnergy(energy, this.threshold)) return false;
     this.spoken = true;
@@ -76,7 +75,7 @@ export class AutoCommitDetector {
     return true;
   }
 
-  /** Earliest moment auto-commit may fire, or null while the turn is not ready. */
+  /** Ближайший момент, когда может сработать автозавершение; null, пока ход не готов. */
   commitDeadline(): number | null {
     if (!this.spoken || !this.partial || this.lastVoiceAt === null) return null;
     return this.lastVoiceAt + this.silenceMs;

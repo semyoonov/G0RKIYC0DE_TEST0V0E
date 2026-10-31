@@ -30,7 +30,7 @@ class ChatCompletion:
 
 
 class GigaChatClient:
-    """Async client for the GigaChat chat/completions API with function calling."""
+    """Асинхронный клиент GigaChat chat/completions с вызовом инструментов."""
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings
@@ -39,7 +39,7 @@ class GigaChatClient:
             timeout=httpx.Timeout(settings.gigachat_timeout_seconds),
             verify=settings.tls_verify,
         )
-        self._oauth = SberOAuthClient(settings.gigachat_auth_url, self._client, settings.tls_verify)
+        self._oauth = SberOAuthClient(settings.gigachat_auth_url, self._client)
         self._closed = False
 
     async def chat(

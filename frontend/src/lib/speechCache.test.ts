@@ -38,7 +38,7 @@ describe("SpeechCache", () => {
     }
     expect(cache.size).toBe(SPEECH_CACHE_MAX_ENTRIES);
 
-    // Touching k0 makes k1 the least recently used entry.
+    // Обращение к k0 делает k1 самой давней записью.
     expect(cache.get("k0")).toBeDefined();
     cache.set("extra", { audio: "A", mime: null });
 

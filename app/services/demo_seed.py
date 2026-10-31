@@ -22,7 +22,7 @@ _WEEKDAYS = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
 
 @dataclass(frozen=True, slots=True)
 class DemoEvent:
-    """A sample record placed relative to the day the account is created."""
+    """Пример записи, привязанный ко дню создания аккаунта."""
 
     type: EventType
     title: str
@@ -92,11 +92,11 @@ def _weekly_rule(moment: datetime) -> str:
 
 
 async def seed_demo_events(session: AsyncSession, user: User, timezone: str) -> int:
-    """Fill a brand-new account with sample tasks so the free calendar is not empty.
+    """Наполняет новый аккаунт примерами задач, чтобы календарь не был пустым.
 
-    Records are placed ahead of the current time, so every reviewer sees upcoming
-    plans rather than history. The rows are flushed, not committed: the caller
-    decides when the account creation transaction ends.
+    Записи ставятся вперёд от текущего момента, поэтому любой проверяющий видит будущие
+    планы, а не историю. Строки только флашатся: когда заканчивать транзакцию создания
+    аккаунта, решает вызывающий.
     """
     now = utcnow().astimezone(ZoneInfo(timezone))
     repository = EventRepository(session)

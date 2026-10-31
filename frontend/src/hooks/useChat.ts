@@ -12,20 +12,20 @@ import type { ChatEntry, ChatReply } from "../types";
 export interface ChatTurnResult {
   reply: ChatReply | null;
   error: string | null;
-  /** True when reply audio was returned inline or attached after the text. */
+  /** true, если аудио пришло вместе с ответом или прикреплено после текста. */
   hasAudio: boolean;
 }
 
 export interface SendTextOptions {
-  /** Fetch speech in a separate request and attach it to the rendered reply. */
+  /** Запросить речь отдельным запросом и прикрепить её к показанному ответу. */
   speak?: boolean;
   closing?: boolean;
   voice?: string;
-  /** Cancels the speech request; the text reply is kept regardless. */
+  /** Отменяет запрос речи; текстовый ответ сохраняется в любом случае. */
   signal?: AbortSignal;
-  /** Reports the assistant entry id as soon as the reply is appended. */
+  /** Отдаёт id реплики ассистента сразу после её добавления в чат. */
   onReplyEntry?: (entryId: string) => void;
-  /** Speech synthesis failed, but the text reply is already rendered. */
+  /** Синтез речи не удался, но текстовый ответ уже показан. */
   onSpeechError?: (message: string) => void;
 }
 
@@ -33,11 +33,11 @@ export interface ChatController {
   entries: ChatEntry[];
   pending: boolean;
   status: string;
-  /** Assistant entry whose speech is being synthesised right now. */
+  /** Реплика ассистента, речь которой синтезируется прямо сейчас. */
   synthesizingEntryId: string | null;
   sendText: (text: string, options?: SendTextOptions) => Promise<ChatTurnResult>;
   sendVoice: (blob: Blob, options?: { voice?: string }) => Promise<void>;
-  /** Attaches speech to an assistant entry that is already on screen. */
+  /** Прикрепляет речь к уже показанной реплике ассистента. */
   attachAudio: (entryId: string, audio: string, mime: string | null) => void;
   complete: (eventId: number) => Promise<void>;
   reportError: (message: string) => void;
@@ -83,7 +83,7 @@ export function useChat(): ChatController {
       setPending(true);
       setStatus("Обрабатываю…");
       try {
-        // The answer is requested without speech so its text renders at once.
+        // Ответ запрашивается без озвучки, чтобы текст появился сразу.
         const reply = await postChat(text, {
           closing: options.closing ?? false,
           voice: options.voice ?? "",
@@ -99,7 +99,7 @@ export function useChat(): ChatController {
 
         setSynthesizingEntryId(replyId);
         try {
-          // Speak the assistant's answer, not the user's utterance.
+          // Озвучивается ответ ассистента, а не фраза пользователя.
           const speech = await postSpeech(reply.reply, options.voice ?? "", options.signal);
           if (!speech.audio) return { reply, error: null, hasAudio: false };
           attachAudio(replyId, speech.audio, speech.audio_mime);

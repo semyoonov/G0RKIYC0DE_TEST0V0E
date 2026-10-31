@@ -19,7 +19,7 @@ import { Input } from "./ui/input";
 
 const MIN_PASSWORD_LENGTH = 8;
 
-/** Guests live in the browser only, so their technical id is not worth showing. */
+/** Гость существует только в браузере, поэтому его технический id показывать незачем. */
 function linkedIdentities(linked: AuthSession["linked"]): AuthSession["linked"] {
   return linked.filter((item) => !(item.platform === "web" && item.external_id.startsWith("guest-")));
 }

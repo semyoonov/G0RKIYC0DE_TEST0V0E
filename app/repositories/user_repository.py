@@ -25,7 +25,7 @@ class UserRepository(BaseRepository[User]):
         return result.scalar_one_or_none()
 
     async def resolve(self, platform: Platform, external_id: str) -> User | None:
-        """The account behind an identity: its own row, or the account it was linked to."""
+        """Аккаунт за идентичностью: своя строка или та, к которой её привязали."""
         user = await self.get_by_external_id(platform, external_id)
         if user is not None:
             return user

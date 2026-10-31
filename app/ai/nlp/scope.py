@@ -1,7 +1,7 @@
-"""Refuse requests that are outside the assistant's product scope.
+"""Отказывает просьбам вне продукта ассистента.
 
-A short phrase list catches the obvious attempts before the model is called;
-everything subtler is left to the prompt, which states the same boundary.
+Короткий список фраз ловит очевидные попытки до вызова модели; остальное закрывает
+промпт, где та же граница описана словами.
 """
 
 from __future__ import annotations

@@ -7,20 +7,20 @@ export type VoiceTurnOutcome =
   | { kind: "empty" }
   | { kind: "error"; message: string };
 
-/** Microphone and per-turn websocket operations used by the loop. */
+/** Операции с микрофоном и веб-сокетом одного хода, которые использует цикл. */
 export interface VoiceTurnPort {
-  /** Acquires the microphone once for the whole conversation. */
+  /** Захватывает микрофон один раз на весь диалог. */
   open(): Promise<boolean>;
   /**
-   * Starts a streaming turn on the already open microphone. A muted turn keeps
-   * capturing frames locally but does not send them to the recognizer.
+   * Открывает потоковый ход на уже захваченном микрофоне. Приглушённый ход
+   * продолжает снимать кадры локально, но не отправляет их распознавателю.
    */
   beginTurn(options?: { muted?: boolean }): Promise<boolean>;
-  /** Stops the turn and resolves with its final transcript. */
+  /** Завершает ход и возвращает его финальную расшифровку. */
   commitTurn(): Promise<VoiceTurnOutcome>;
-  /** Releases the microphone when the mode ends. */
+  /** Освобождает микрофон при выходе из режима. */
   release(): void;
-  /** Resumes forwarding frames on the turn that is already open. */
+  /** Возобновляет отправку кадров в уже открытом ходе. */
   unmute(): void;
 }
 
@@ -37,19 +37,19 @@ export type ConversationSend = (
 export interface ConversationLoopOptions {
   voice: VoiceTurnPort;
   sendUtterance: ConversationSend;
-  /** Defaults to the shared farewell detector. */
+  /** По умолчанию общий детектор прощания. */
   isFarewell?: (text: string) => boolean;
-  /** Reports whether the current turn contains actual speech. */
+  /** Сообщает, есть ли в текущем ходе настоящая речь. */
   hasSpeech?: () => boolean;
   onPhase?: (phase: ConversationPhase) => void;
   onActiveChange?: (active: boolean) => void;
   onError?: (message: string) => void;
   onFarewell?: () => void;
-  /** Best-effort diagnostics; receives the loop's phase at the time of the event. */
+  /** Необязательная диагностика; получает фазу цикла на момент события. */
   onTelemetry?: (event: string, phase: ConversationPhase, detail: string) => void;
-  /** Quiet pause before a fallback listening turn is reopened. */
+  /** Пауза перед повторным открытием запасного хода прослушивания. */
   guardMs?: number;
-  /** Safety net when a playback callback never arrives. */
+  /** Страховка на случай, если колбэк воспроизведения так и не придёт. */
   playbackTimeoutMs?: number;
   delay?: (milliseconds: number) => Promise<void>;
 }
@@ -83,17 +83,18 @@ function defaultDelay(milliseconds: number): Promise<void> {
 type TurnState = "idle" | "opening" | "listening" | "committing" | "sending" | "muted";
 
 /**
- * Hands-free dialogue that keeps one microphone and one streaming turn alive:
+ * Диалог без рук, который держит один микрофон и один потоковый ход:
  *
- * listen -> commit -> send -> think (next turn opens muted) -> speak (muted,
- * barge-in armed) -> unmute -> listen again in the same turn
+ * слушаем -> завершаем -> отправляем -> думаем (следующий ход открывается
+ * приглушённым) -> говорим (приглушённо, перебивание взведено) -> снимаем
+ * заглушение -> снова слушаем в том же ходе
  *
- * The turn that is opened in muted mode while the answer is generated becomes
- * the next listening turn: after playback it is merely unmuted, so neither the
- * microphone nor the websocket is reopened. A short farewell is sent with
- * `closing: true` and the loop ends after its reply. An empty turn starts
- * listening again instead of surfacing an error, and a failed request keeps
- * the microphone and resumes listening. The loop owns no React state.
+ * Ход, открытый приглушённым на время генерации ответа, становится следующим
+ * ходом прослушивания: после воспроизведения с него лишь снимается заглушение,
+ * поэтому ни микрофон, ни веб-сокет не переоткрываются. Короткое прощание
+ * отправляется с `closing: true`, и цикл заканчивается после ответа. Пустой ход
+ * начинает слушать заново, а не показывает ошибку; неудачный запрос сохраняет
+ * микрофон и возвращается к прослушиванию. Цикл не хранит состояние React.
  */
 export class ConversationLoop {
   private readonly options: ConversationLoopOptions;
@@ -144,13 +145,13 @@ export class ConversationLoop {
     await this.listen(generation);
   }
 
-  /** Auto-commit: only valid while a listening turn is in progress. */
+  /** Автозавершение: допустимо только во время хода прослушивания. */
   async commit(): Promise<void> {
     if (!this.active || this.stopRequested || this.turn !== "listening") return;
     await this.commitTurn(this.generation, false);
   }
 
-  /** Manual stop: commit what is streaming, then leave the mode. */
+  /** Ручная остановка: завершить текущий поток, затем выйти из режима. */
   async stop(): Promise<void> {
     if (!this.active) return;
     const generation = this.generation;
@@ -171,7 +172,7 @@ export class ConversationLoop {
     this.setPhase("idle");
   }
 
-  /** Called when the current reply audio ends, fails, or is interrupted. */
+  /** Вызывается, когда звук ответа закончился, упал или был прерван. */
   notifyPlaybackFinished(): void {
     this.gate?.settle();
   }
@@ -192,7 +193,7 @@ export class ConversationLoop {
     this.setPhase("listening");
     const started = await this.options.voice.beginTurn();
     if (generation !== this.generation || !this.active || this.stopRequested) {
-      // A stop during the opening handshake may have raced with stream setup.
+      // Остановка во время открывающего рукопожатия могла обогнать настройку потока.
       this.options.voice.release();
       return;
     }
@@ -204,9 +205,9 @@ export class ConversationLoop {
   }
 
   /**
-   * Opens the next streaming turn while the answer is on its way. It is muted
-   * from the first frame, so no partials and no auto-commit happen before the
-   * reply audio is over (or interrupted by the user).
+   * Открывает следующий потоковый ход, пока ответ ещё в пути. Ход приглушён с
+   * первого кадра, поэтому промежуточных расшифровок и автозавершения нет,
+   * пока не закончится (или не будет прерван) звук ответа.
    */
   private async openMutedTurn(generation: number): Promise<boolean> {
     if (generation !== this.generation || !this.active || this.stopRequested) return false;
@@ -237,8 +238,8 @@ export class ConversationLoop {
     if (generation !== this.generation) return;
 
     if (!this.active || this.stopRequested) {
-      // The turn is already stopped; the microphone is no longer needed while
-      // the transcript is sent and the reply is announced.
+      // Ход уже остановлен: микрофон больше не нужен, пока отправляется
+      // расшифровка и объявляется ответ.
       this.options.voice.release();
     }
 
@@ -266,8 +267,8 @@ export class ConversationLoop {
     this.gate = gate;
     this.turn = "sending";
 
-    // Both start in the same tick: the request goes out and the microphone opens
-    // the next streaming turn in muted mode while the answer is being produced.
+    // Оба стартуют в одном тике: запрос уходит, а микрофон открывает следующий
+    // потоковый ход приглушённым, пока генерируется ответ.
     let sendPromise: Promise<ConversationSendResult>;
     try {
       sendPromise = this.options.sendUtterance(outcome.text, { closing });
@@ -309,7 +310,7 @@ export class ConversationLoop {
         return;
       }
       if (mutedReady) {
-        // The mic never closed: carry on in the turn that is already streaming.
+        // Микрофон не закрывался: продолжаем в уже потоковом ходе.
         this.resumeListening(generation);
         return;
       }
@@ -340,12 +341,12 @@ export class ConversationLoop {
       return;
     }
     if (mutedReady) {
-      // No reopen: the muted turn simply starts forwarding frames again.
+      // Переоткрытия нет: приглушённый ход просто снова начинает слать кадры.
       this.resumeListening(generation);
       return;
     }
 
-    // The muted turn could not be opened; reopen a fresh listening turn instead.
+    // Приглушённый ход открыть не удалось: открываем новый ход прослушивания.
     this.turn = "idle";
     await this.sleep(this.guardMs);
     if (generation !== this.generation || !this.active || this.stopRequested) return;
@@ -392,7 +393,7 @@ export class ConversationLoop {
     try {
       this.options.onTelemetry?.(event, this.phase, detail);
     } catch {
-      // Diagnostics must never break the dialogue.
+      // Диагностика не должна ломать диалог.
     }
   }
 

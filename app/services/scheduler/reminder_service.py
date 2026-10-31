@@ -1,6 +1,5 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -13,14 +12,8 @@ from app.repositories.event_repository import EventRepository
 log = get_logger(__name__)
 
 
-class Notifier(Protocol):
-    platform: Platform
-
-    async def __call__(self, user: User, event: Event) -> None: ...
-
-
 class ReminderService:
-    """Polls due reminders and delivers them through registered interface notifiers."""
+    """Опрашивает наступившие напоминания и отдаёт их нотификаторам интерфейсов."""
 
     def __init__(
         self,
@@ -55,7 +48,7 @@ class ReminderService:
         self._task = None
 
     async def run_once(self) -> int:
-        """Deliver all reminders that are due now; returns the delivered count."""
+        """Отправляет все наступившие напоминания; возвращает число отправленных."""
         if not self._notifiers:
             return 0
         async with self._session_factory() as session:
@@ -64,7 +57,7 @@ class ReminderService:
                 lookahead_seconds=self._lookahead_seconds,
                 platforms=list(self._notifiers),
             )
-            # Release the connection before notifier HTTP calls.
+            # Освобождаем соединение до HTTP-вызовов нотификаторов.
             await session.commit()
             delivered = 0
             for event in due:

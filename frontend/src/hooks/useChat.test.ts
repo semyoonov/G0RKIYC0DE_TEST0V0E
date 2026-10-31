@@ -78,7 +78,7 @@ describe("useChat.sendText", () => {
     expect(result.current.pending).toBe(true);
     expect(result.current.entries.map((entry) => entry.role)).toEqual(["user"]);
 
-    // /api/chat answers: the text has to be on screen right away.
+    // Ответ /api/chat: текст должен появиться на экране сразу.
     await act(async () => {
       resolveChat(jsonResponse(REPLY));
       await flush();
@@ -88,19 +88,19 @@ describe("useChat.sendText", () => {
     expect(assistant).toBeDefined();
     expect(assistant?.reply.reply).toBe(REPLY.reply);
     expect(assistant?.audio).toBeUndefined();
-    // Sends stay serialised until the turn (including its voice) is done.
+    // Отправки остаются сериализованными, пока ход (вместе с озвучкой) не закончен.
     expect(result.current.pending).toBe(true);
-    // The UI can show that this reply is being voiced right now.
+    // Интерфейс может показать, что ответ озвучивается прямо сейчас.
     expect(result.current.synthesizingEntryId).toBe(assistant?.id);
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/speech");
     const speechBody = JSON.parse(
       String(fetchMock.mock.calls[1]?.[1]?.body),
     ) as Record<string, unknown>;
-    // The assistant answer is synthesised, not the user's phrase.
+    // Синтезируется ответ ассистента, а не фраза пользователя.
     expect(speechBody.text).toBe(REPLY.reply);
     expect(speechBody.voice).toBe("v1");
 
-    // The speech arrives later and lands on the entry that is already rendered.
+    // Речь приходит позже и попадает в уже отрисованную реплику.
     await act(async () => {
       resolveSpeech(jsonResponse({ audio: "QUJD", audio_mime: "audio/ogg", audio_format: "opus" }));
       await flush();
@@ -131,7 +131,7 @@ describe("useChat.sendText", () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as Record<string, unknown>;
     expect(body.speak).toBe(false);
     expect(findAssistant(result.current.entries)?.audio).toBeUndefined();
-    // Speak-off never enters the "voicing" state.
+    // Без озвучки состояние «озвучивается» не наступает вообще.
     expect(result.current.synthesizingEntryId).toBeNull();
   });
 

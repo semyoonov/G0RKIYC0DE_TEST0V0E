@@ -1,7 +1,7 @@
-"""iCalendar (.ics) export service using the icalendar library (RFC 5545).
+"""Выгрузка в iCalendar (.ics) через библиотеку icalendar (RFC 5545).
 
-Supports explicit Europe/Moscow timezone definition (VTIMEZONE),
-recurrence rules (RRULE), and standard notification alarms (VALARM).
+Есть явное описание пояса Europe/Moscow (VTIMEZONE), правила повтора (RRULE)
+и стандартные оповещения (VALARM).
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ _DURATION_RE = re.compile(r"Длительность:\s*(\d+)\s*мин", re.IGNO
 
 
 def build_moscow_vtimezone() -> Timezone:
-    """Builds RFC 5545 compliant VTIMEZONE component for Europe/Moscow."""
+    """Собирает VTIMEZONE для Europe/Moscow по RFC 5545."""
     tz = Timezone()
     tz.add("tzid", "Europe/Moscow")
     tz.add("x-lic-location", "Europe/Moscow")
@@ -54,7 +54,7 @@ def export_events_to_ics(
     events: Sequence[Event],
     timezone_name: str = DEFAULT_TZ_NAME,
 ) -> bytes:
-    """Exports a list of user events into standard iCalendar (.ics) bytes."""
+    """Выгружает записи пользователя в байты iCalendar (.ics)."""
     tz = ZoneInfo(timezone_name)
     now_utc = utcnow()
 
@@ -66,7 +66,7 @@ def export_events_to_ics(
     cal.add("x-wr-calname", CALENDAR_NAME)
     cal.add("x-wr-timezone", timezone_name)
 
-    # Insert explicit VTIMEZONE for compatibility with Outlook, Apple, Google, and Yandex
+    # Явный VTIMEZONE нужен для совместимости с Outlook, Apple, Google и Яндекс.Календарём
     if timezone_name == "Europe/Moscow":
         cal.add_component(build_moscow_vtimezone())
 
@@ -86,14 +86,14 @@ def export_events_to_ics(
         status_str = "COMPLETED" if event.status is EventStatus.DONE else "CONFIRMED"
         vevent.add("status", status_str)
 
-        # Timestamps
+        # Метки времени
         created_utc = ensure_aware(event.created_at).astimezone(timezone.utc) if event.created_at else now_utc
         updated_utc = ensure_aware(event.updated_at).astimezone(timezone.utc) if event.updated_at else created_utc
         vevent.add("dtstamp", now_utc)
         vevent.add("created", created_utc)
         vevent.add("last-modified", updated_utc)
 
-        # Start and End times
+        # Начало и конец
         moment = event.starts_at or event.remind_at
         if moment is not None:
             dtstart = ensure_aware(moment).astimezone(tz)
@@ -103,12 +103,12 @@ def export_events_to_ics(
             vevent.add("dtstart", dtstart)
             vevent.add("dtend", dtend)
         else:
-            # Undated task: export as all-day event for creation date
+            # Задача без даты: выгружаем событием на весь день в дату создания
             c_date = created_utc.astimezone(tz).date()
             vevent.add("dtstart", c_date)
             vevent.add("dtend", c_date + timedelta(days=1))
 
-        # Recurrence Rule (RRULE)
+        # Правило повтора (RRULE)
         if event.rrule:
             clean_rrule = event.rrule.strip().replace("RRULE:", "").strip()
             if clean_rrule:
@@ -117,15 +117,15 @@ def export_events_to_ics(
                 except Exception:
                     pass
 
-        # Standard alarm (VALARM)
+        # Оповещение (VALARM)
         alarm = Alarm()
         alarm.add("action", "DISPLAY")
         alarm.add("description", f"Напоминание: {event.title}")
         if event.type is EventType.MEETING:
-            # Alert 15 minutes before meeting
+            # За 15 минут до встречи
             alarm.add("trigger", -timedelta(minutes=15))
         else:
-            # Alert at start of task / reminder
+            # В момент начала задачи или напоминания
             alarm.add("trigger", timedelta(0))
         vevent.add_component(alarm)
 

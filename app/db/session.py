@@ -30,7 +30,7 @@ class Database:
             yield session
 
     async def create_all(self) -> None:
-        """Create the schema from the models; an existing database is migrated by Alembic."""
+        """Создаёт схему по моделям; уже существующую базу обновляет Alembic."""
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
 

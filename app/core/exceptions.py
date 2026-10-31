@@ -1,25 +1,25 @@
 class AssistantError(Exception):
-    """Base error of the assistant pipeline."""
+    """Базовая ошибка пайплайна ассистента."""
 
 
 class ConfigurationError(AssistantError):
-    """Required settings or local resources are missing."""
+    """Не заданы нужные настройки или нет локальных ресурсов."""
 
 
 class NotFoundError(AssistantError):
-    """Requested entity does not exist or belongs to another user."""
+    """Записи нет или она принадлежит другому пользователю."""
 
 
 class TranscriptionError(AssistantError):
-    """Audio cannot be converted or recognised."""
+    """Аудио не удалось конвертировать или распознать."""
 
 
 class SpeechSynthesisError(AssistantError):
-    """Text-to-speech backend failed."""
+    """Бэкенд синтеза речи упал."""
 
 
 class LLMError(AssistantError):
-    """Chat model call failed or returned an unusable answer."""
+    """Вызов чат-модели упал или вернул негодный ответ."""
 
 
 class ExternalServiceError(AssistantError):

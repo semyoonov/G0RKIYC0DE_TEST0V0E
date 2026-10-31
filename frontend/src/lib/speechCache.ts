@@ -1,10 +1,11 @@
 /**
- * In-memory cache for synthesised speech.
+ * Кэш синтезированной речи в памяти.
  *
- * `/api/speech` costs 1–3 s per call, but the same answer is often voiced
- * again (repeats, quick actions, replays after a barge-in or a missed phrase).
- * A small LRU keeps those instant without touching the backend contract.
- * Audio is never cached when synthesis failed and never persisted to disk.
+ * `/api/speech` стоит 1–3 с на вызов, но один и тот же ответ часто озвучивается
+ * повторно (переспрос, быстрые действия, повтор после перебивания или
+ * нераспознанной фразы). Небольшой LRU делает такие повторы мгновенными и не
+ * трогает контракт бэкенда. Неудачный синтез не кэшируется, на диск ничего не
+ * пишется.
  */
 
 export interface CachedSpeech {
@@ -35,7 +36,7 @@ export class SpeechCache {
   get(key: string): CachedSpeech | undefined {
     const hit = this.entries.get(key);
     if (!hit) return undefined;
-    // Refresh the recency order: the Map keeps insertion order.
+    // Обновляет порядок давности: Map хранит порядок вставки.
     this.entries.delete(key);
     this.entries.set(key, hit);
     return hit;

@@ -1,9 +1,8 @@
-"""Ask the model what the user said about time, in a separate, narrow call.
+"""Спрашивает у модели, что сказано о времени, отдельным узким вызовом.
 
-The chat model is good at reading a phrase and bad at doing date arithmetic in
-the same breath as composing an answer. This call returns the facts only —
-whether a date and a time were named, which day of the week, and which record the
-user means — and leaves the arithmetic and the policy to the caller.
+Чат-модель хорошо читает фразу и плохо считает даты в том же проходе, где пишет ответ.
+Этот вызов возвращает только факты: названы ли дата и время, какой день недели и о какой
+записи речь. Арифметику и правила решает вызывающий код.
 """
 
 from __future__ import annotations
@@ -151,7 +150,7 @@ def moment_from_facts(
     *,
     now: datetime,
 ) -> datetime | None:
-    """Combine the facts with whatever the chat model proposed for the record."""
+    """Сводит факты о времени с тем, что предложила чат-модель."""
     day = facts.date or weekday_date(facts.weekday, now.date())
     clock = facts.time
     if day is None and clock is None:

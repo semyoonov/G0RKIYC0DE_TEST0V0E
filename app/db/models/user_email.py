@@ -7,7 +7,7 @@ from app.db.base import Base
 
 
 class UserEmail(Base):
-    """A login email and the stable web identity used for sessions."""
+    """Почта для входа и постоянная веб-идентичность, на которой держатся сессии."""
 
     __tablename__ = "user_emails"
     __table_args__ = (

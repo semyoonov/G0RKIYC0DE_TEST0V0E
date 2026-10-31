@@ -5,7 +5,7 @@ import type { AssistantEvent, ChatReply } from "../types";
 import { ChatMessage } from "./ChatMessage";
 
 beforeEach(() => {
-  // jsdom has no object URLs; the audio element only needs a stable source.
+  // В jsdom нет object URL; элементу audio нужен лишь стабильный источник.
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
     writable: true,

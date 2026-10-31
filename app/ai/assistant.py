@@ -79,7 +79,7 @@ CLOSING_RULE = (
 
 
 class AssistantService:
-    """One entry point for every interface: audio/text in, text and optional audio out."""
+    """Единая точка входа для интерфейсов: на входе аудио или текст, на выходе текст и по запросу аудио."""
 
     def __init__(
         self,
@@ -143,7 +143,7 @@ class AssistantService:
         return response
 
     async def speak(self, text: str, *, voice: str | None = None) -> tuple[bytes, str] | None:
-        """Synthesises text on demand so the client can render the reply before its audio."""
+        """Синтез по отдельному запросу: клиент показывает ответ раньше, чем приходит его аудио."""
         if self._tts is None or not self._settings.tts_enabled:
             return None
         normalized = " ".join((text or "").split())
@@ -161,7 +161,7 @@ class AssistantService:
         return audio, mime or "application/octet-stream"
 
     async def prewarm(self) -> bool:
-        """Sends the system prompt ahead of the first utterance so the first answer starts faster."""
+        """Прогревает модель системным промптом, чтобы первый ответ пришёл быстрее."""
         if self._llm is None or not self._settings.gigachat_enabled:
             return False
         messages: list[dict[str, Any]] = [
@@ -290,7 +290,7 @@ class AssistantService:
                 llm=self._llm if self._settings.temporal_extraction_enabled else None,
                 utterance=text,
             )
-            # End the read transaction so the connection is not held during model and messenger calls.
+            # Закрываем транзакцию чтения, чтобы не держать соединение на время вызовов модели и мессенджеров.
             await session.commit()
             answer, events, intent = await self._run_llm(user.id, text, executor, closing=closing)
         return AssistantResponse(
@@ -309,8 +309,8 @@ class AssistantService:
         closing: bool = False,
     ) -> tuple[str, list[EventRead], str | None]:
         assert self._llm is not None
-        # GigaChat accepts exactly one system message and it has to come first, so the
-        # closing rule is folded into the prompt instead of being a second system message.
+        # GigaChat принимает ровно одно system-сообщение, и оно должно быть первым,
+        # поэтому прощание встроено в промпт, а не отправлено вторым system-сообщением.
         system_prompt = build_system_prompt(self._settings.tz)
         if closing:
             system_prompt = f"{system_prompt}\n\n{CLOSING_RULE}"
@@ -339,9 +339,9 @@ class AssistantService:
             call = completion.function_call
             recovered = []
             if call is None:
-                # GigaChat sometimes serialises the call into the text. Execute it
-                # instead of showing the JSON to the user and losing the action.
-                recovered, completion_content = recover_calls(completion.content or "")
+                # GigaChat иногда сериализует вызов в текст: выполняем его,
+                # а не показываем пользователю JSON, теряя действие.
+                recovered, _ = recover_calls(completion.content or "")
                 if not recovered:
                     answer = completion.content.strip()
                     break
@@ -372,7 +372,7 @@ class AssistantService:
                     {
                         "role": "function",
                         "name": name,
-                        # GigaChat rejects a plain sentence here: the function reply must be JSON.
+                        # GigaChat не принимает обычную фразу: ответ на вызов инструмента обязан быть JSON.
                         "content": json.dumps({"result": result.content}, ensure_ascii=False),
                     }
                 )

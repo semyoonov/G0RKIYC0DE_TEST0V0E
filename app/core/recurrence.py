@@ -1,4 +1,4 @@
-"""Recurrence utilities (RFC 5545 RRULE) and Russian natural language detection."""
+"""Повторы (RFC 5545 RRULE) и распознавание повтора в русской фразе."""
 from __future__ import annotations
 
 import re
@@ -51,7 +51,7 @@ _BYDAY_TO_WEEKDAY: dict[str, int] = {
 
 
 def detect_rrule(text: str | None) -> str | None:
-    """Detects recurring event rules from Russian speech/text if present."""
+    """Достаёт правило повтора из русской речи или текста, если оно там есть."""
     if not text:
         return None
     for pattern, rrule, _ in _WEEKDAY_PATTERNS:
@@ -64,13 +64,13 @@ def detect_rrule(text: str | None) -> str | None:
 
 
 def format_rrule_ru(rrule: str | None) -> str | None:
-    """Converts standard RFC 5545 RRULE into readable Russian text."""
+    """Переписывает RRULE понятным русским текстом."""
     if not rrule:
         return None
     clean = rrule.strip().upper().replace("RRULE:", "")
     if clean in _KNOWN_RULES_RU:
         return _KNOWN_RULES_RU[clean]
-    # Check parts:
+    # Разбираем части:
     parts = dict(part.split("=", 1) for part in clean.split(";") if "=" in part)
     freq = parts.get("FREQ")
     byday = parts.get("BYDAY")
@@ -94,7 +94,7 @@ def format_rrule_ru(rrule: str | None) -> str | None:
 
 
 def next_recurrence(rrule_str: str, dtstart: datetime, after: datetime) -> datetime | None:
-    """Calculates next occurrence of recurring rule strictly after `after` datetime."""
+    """Ближайшее вхождение правила строго после `after`."""
     try:
         clean = rrule_str.strip().replace("RRULE:", "")
         rule = rrulestr(clean, dtstart=dtstart)
@@ -104,7 +104,7 @@ def next_recurrence(rrule_str: str, dtstart: datetime, after: datetime) -> datet
 
 
 def align_starts_at_with_rrule(moment: datetime | None, rrule_str: str | None) -> datetime | None:
-    """If rrule has BYDAY specified, ensures moment starts on one of those allowed weekdays."""
+    """Ставит начало на один из дней BYDAY, если правило их задаёт."""
     if moment is None or not rrule_str:
         return moment
 
@@ -118,11 +118,11 @@ def align_starts_at_with_rrule(moment: datetime | None, rrule_str: str | None) -
     if not target_days:
         return moment
 
-    # If moment is already on one of the target days, nothing to adjust
+    # Момент уже попадает на нужный день — править нечего
     if moment.weekday() in target_days:
         return moment
 
-    # Otherwise advance moment to the nearest upcoming target day preserving time and tz
+    # Иначе переносим момент на ближайший подходящий день, сохраняя время и пояс
     for delta in range(1, 8):
         from datetime import timedelta
         candidate = moment + timedelta(days=delta)

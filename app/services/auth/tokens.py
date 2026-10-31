@@ -14,7 +14,7 @@ _TOKEN_VERSION = 1
 
 
 class SessionTokenError(ValueError):
-    """Session token is missing, malformed, forged or expired."""
+    """Токен сессии отсутствует, испорчен, подделан или истёк."""
 
 
 def _b64encode(raw: bytes) -> str:
@@ -30,10 +30,10 @@ def _b64decode(value: str) -> bytes:
 
 
 class SessionTokens:
-    """Compact signed tokens: `base64url(payload).base64url(hmac)`.
+    """Компактные подписанные токены: `base64url(payload).base64url(hmac)`.
 
-    The payload names the platform identity, so a validated mini-app launch and a
-    later API call are tied together without a server-side session store.
+    В payload лежит платформенная идентичность, поэтому проверенный запуск мини-приложения
+    и следующий за ним вызов API связаны между собой без серверного хранилища сессий.
     """
 
     def __init__(self, secret: str, ttl_seconds: int = 30 * 24 * 60 * 60) -> None:

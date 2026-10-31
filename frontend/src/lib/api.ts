@@ -37,7 +37,7 @@ export function readSessionToken(): string | null {
     const stored = localStorageOrNull()?.getItem(SESSION_TOKEN_STORAGE_KEY);
     if (stored) return stored;
   } catch {
-    // Private mode can block localStorage.
+    // Приватный режим может блокировать localStorage.
   }
   return memoryToken;
 }
@@ -47,7 +47,7 @@ export function writeSessionToken(token: string): void {
   try {
     localStorageOrNull()?.setItem(SESSION_TOKEN_STORAGE_KEY, token);
   } catch {
-    // The token stays valid for the current page session.
+    // Токен остаётся рабочим до конца сеанса страницы.
   }
 }
 
@@ -56,7 +56,7 @@ export function clearSessionToken(): void {
   try {
     localStorageOrNull()?.removeItem(SESSION_TOKEN_STORAGE_KEY);
   } catch {
-    // Nothing to clear when storage is unavailable.
+    // Хранилище недоступно — очищать нечего.
   }
 }
 
@@ -64,7 +64,7 @@ type SessionRecovery = () => Promise<string | null>;
 
 let recoverSession: SessionRecovery | null = null;
 
-/** The session store registers how to obtain a fresh token after a 401. */
+/** Хранилище сессии регистрирует здесь способ получить свежий токен после 401. */
 export function setSessionRecovery(handler: SessionRecovery | null): void {
   recoverSession = handler;
 }
@@ -85,8 +85,8 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 /**
- * Account-scoped endpoints retry once with a freshly issued token. The retry
- * never repeats for a second 401, so a broken session cannot loop.
+ * Эндпоинты аккаунта повторяются один раз со свежим токеном. Повтор не
+ * срабатывает на второй 401, поэтому сломанная сессия не зацикливается.
  */
 async function requestWithSession<T>(path: string, init: RequestInit): Promise<T> {
   const token = readSessionToken();
@@ -156,8 +156,8 @@ export interface ChatRequestOptions {
 }
 
 /**
- * Text answers arrive without speech (`speak: false`), so the reply can render
- * while the voice is synthesised in a separate, abortable request.
+ * Текстовый ответ приходит без озвучки (`speak: false`), поэтому ответ
+ * показывается сразу, а голос синтезируется отдельным прерываемым запросом.
  */
 export async function postChat(
   text: string,
@@ -189,10 +189,10 @@ export interface SpeechResult {
   audio_format?: string | null;
 }
 
-/** Answers already voiced in this page session; repeats skip the network. */
+/** Уже озвученные за сеанс ответы: повтор не ходит в сеть. */
 const speechCache = new SpeechCache();
 
-/** Synthesises speech for an already rendered reply; abortable by the caller. */
+/** Синтез речи для уже показанного ответа; вызывающий может прервать запрос. */
 export async function postSpeech(
   text: string,
   voice = "",
@@ -226,7 +226,7 @@ export async function postSpeech(
   return result;
 }
 
-/** Test hook: forget every cached answer. */
+/** Только для тестов: забыть все закэшированные ответы. */
 export function clearSpeechCache(): void {
   speechCache.clear();
 }
@@ -234,8 +234,8 @@ export function clearSpeechCache(): void {
 const TELEMETRY_DETAIL_LIMIT = 180;
 
 /**
- * Fire-and-forget diagnostics for the hands-free loop. It never returns a
- * promise the caller could await and never throws: telemetry is best effort.
+ * Диагностика цикла без рук «выстрелил и забыл»: функция не отдаёт промис,
+ * который можно дождаться, и не бросает исключений — телеметрия необязательна.
  */
 export function reportTelemetry(
   event: string,
@@ -254,19 +254,19 @@ export function reportTelemetry(
       body,
     }).catch(() => {});
   } catch {
-    // A failed telemetry post must never reach the user.
+    // Сбой отправки телеметрии не должен доходить до пользователя.
   }
 }
 
 /**
- * Warms the model for the next hands-free turn. It is best-effort by design:
- * every failure is swallowed so the conversation never waits on it.
+ * Прогревает модель для следующего хода без рук. Ошибки глушатся намеренно:
+ * разговор не должен ждать прогрева.
  */
 export async function warmupChat(): Promise<void> {
   try {
     await fetch("/api/chat/warmup", withAuthorization({ method: "POST" }));
   } catch {
-    // A warmup failure must stay invisible to the user.
+    // Сбой прогрева остаётся невидимым для пользователя.
   }
 }
 

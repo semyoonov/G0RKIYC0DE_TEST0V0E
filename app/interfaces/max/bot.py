@@ -38,7 +38,7 @@ def inline_keyboard_attachment(buttons: list[list[dict[str, Any]]]) -> dict[str,
 
 
 class MaxClient:
-    """Async client for the MAX Bot API."""
+    """Асинхронный клиент MAX Bot API."""
 
     def __init__(
         self,
@@ -187,7 +187,7 @@ class MaxClient:
 
 
 class MaxBot:
-    """Long-polling MAX bot wired to the assistant service."""
+    """Бот MAX на long polling поверх сервиса ассистента."""
 
     def __init__(
         self,

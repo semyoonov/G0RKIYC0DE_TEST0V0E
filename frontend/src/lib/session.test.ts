@@ -179,7 +179,7 @@ describe("bootstrapSession", () => {
     expect(snapshot.status).toBe("error");
     expect(snapshot.error).toBe(NETWORK_ERROR_TEXT);
     expect(snapshot.session).toBeNull();
-    // The token stays: the next load retries it instead of starting over.
+    // Токен остаётся: следующая загрузка повторит попытку, а не начнёт заново.
     expect(session.getToken()).toBe("stored-token");
   });
 });

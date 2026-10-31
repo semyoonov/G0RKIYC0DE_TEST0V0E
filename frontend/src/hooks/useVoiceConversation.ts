@@ -31,11 +31,10 @@ export interface VoiceConversationOptions {
   voice: VoiceController;
   sendUtterance: ConversationSend;
   reportError: (message: string) => void;
-  /** Best-effort model warmup; called every time the mode is entered. */
   warmup?: () => void;
-  /** Interrupts the reply audio when the user starts talking over it. */
+  /** Прерывает звук ответа, когда пользователь начинает говорить поверх него. */
   pausePlayback?: () => void;
-  /** Diagnostics sink; defaults to the real /api/telemetry reporter. */
+  /** Приёмник диагностики; по умолчанию настоящий репортёр /api/telemetry. */
   telemetry?: TelemetrySink;
 }
 
@@ -57,16 +56,15 @@ function pauseAllPlayback(): void {
     try {
       node.pause();
     } catch {
-      // The element was already stopped.
     }
   });
 }
 
 /**
- * Drives a hands-free conversation: the microphone is opened once, VAD decides
- * when a turn is committed, and the next streaming turn is opened muted while
- * the answer is generated. It is unmuted after playback — or immediately when
- * the user talks over the reply (barge-in).
+ * Ведёт диалог без рук: микрофон открывается один раз, VAD решает, когда ход
+ * завершается, а следующий потоковый ход открывается приглушённым на время
+ * генерации ответа. Заглушение снимается после воспроизведения — или сразу,
+ * если пользователь заговорил поверх ответа (перебивание).
  */
 export function useVoiceConversation(
   options: VoiceConversationOptions,
@@ -195,8 +193,8 @@ export function useVoiceConversation(
     const unsubscribe = subscribeEnergy((energy) => {
       if (!activeRef.current || phaseRef.current !== "speaking") return;
       if (Date.now() - startedAt < BARGE_IN_STARTUP_GUARD_MS) return;
-      // Sustained input above the barge-in threshold means the user is talking
-      // over the answer: stop the audio and keep listening in the same turn.
+      // Длительный сигнал выше порога перебивания означает, что пользователь
+      // говорит поверх ответа: гасим звук и слушаем дальше в том же ходе.
       if (!detector.noteEnergy(energy, Date.now())) return;
       pausePlaybackRef.current();
       voiceRef.current.unmute();
@@ -222,9 +220,8 @@ export function useVoiceConversation(
       return;
     }
     if (!lastPartialRef.current) return;
-    // The recognizer finalised the phrase itself: an empty partial that follows a
-    // non-empty one is its own endpoint signal, so the turn commits without the
-    // silence window.
+    // Распознаватель завершил фразу сам: пустая расшифровка после непустой
+    // сама по себе означает конец, поэтому ход завершается без окна тишины.
     lastPartialRef.current = "";
     detector?.setPartial("");
     if (detector?.spoke) {
@@ -237,7 +234,7 @@ export function useVoiceConversation(
     setHint(null);
     voiceRef.current.clearError();
     if (typeof document !== "undefined") {
-      // Entering hands-free mode must not capture an older reply still playing.
+      // Вход в режим без рук не должен подхватывать ещё играющий старый ответ.
       document.querySelectorAll("audio").forEach((node) => node.pause());
     }
     const warmup = warmupRef.current;
@@ -245,7 +242,7 @@ export function useVoiceConversation(
       try {
         void Promise.resolve(warmup()).catch(() => {});
       } catch {
-        // Warmup must never block the conversation.
+        // Прогрев не должен блокировать диалог.
       }
     }
     await loopRef.current?.start();
@@ -266,8 +263,8 @@ export function useVoiceConversation(
     loopRef.current?.notifyPlaybackFinished();
   }, []);
 
-  // A denied microphone or a broken voice stream must never leave the UI
-  // stuck in conversation mode; the same effect reports the failure once.
+  // Отказ в микрофоне или сломанный голосовой поток не должны оставлять
+  // интерфейс в режиме диалога; сбой сообщается один раз.
   useEffect(() => {
     const message = options.voice.error;
     if (!message) {

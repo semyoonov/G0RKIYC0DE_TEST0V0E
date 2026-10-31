@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class AccountLink(Base):
-    """An extra platform identity that belongs to an account owned by a `users` row."""
+    """Дополнительная платформенная привязка к аккаунту из строки `users`."""
 
     __tablename__ = "account_links"
     __table_args__ = (UniqueConstraint("platform", "external_id", name="uq_account_links_identity"),)

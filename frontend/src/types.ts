@@ -47,7 +47,7 @@ export interface AuthSession {
   user: { id: number };
   linked: SessionIdentity[];
   mini_apps: MiniApps;
-  /** Login address of the account; null while the visitor stays a guest. */
+  /** Почта аккаунта; null, пока посетитель остаётся гостем. */
   email: string | null;
   has_password: boolean;
 }
@@ -61,7 +61,7 @@ export interface Meta {
   voice?: string;
 }
 
-/** Speech synthesised separately and attached to an already rendered reply. */
+/** Речь, синтезированная отдельно и прикреплённая к уже показанному ответу. */
 export interface ChatAudio {
   data: string;
   mime: string | null;
@@ -73,7 +73,7 @@ export type ChatEntry =
       id: string;
       role: "assistant";
       reply: ChatReply;
-      /** Filled in later by `attachAudio`; absent until the speech arrives. */
+      /** Проставляется позже в `attachAudio`; отсутствует, пока речь не пришла. */
       audio?: ChatAudio | null;
     }
   | { id: string; role: "error"; text: string };

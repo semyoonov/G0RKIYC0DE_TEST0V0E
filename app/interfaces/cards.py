@@ -1,4 +1,4 @@
-"""Shared rendering of executed-action cards for the chat interfaces."""
+"""Общая отрисовка карточек выполненных действий для чат-интерфейсов."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def done_button(event: EventRead) -> tuple[str, str] | None:
 
 
 def parse_done_callback(data: str | None) -> int | None:
-    """Event id carried by a done-button payload, or None when it is malformed."""
+    """Id записи из payload кнопки «Готово»; None, если он битый."""
     if not isinstance(data, str) or not data.startswith(DONE_CALLBACK_PREFIX):
         return None
     raw = data[len(DONE_CALLBACK_PREFIX):]
