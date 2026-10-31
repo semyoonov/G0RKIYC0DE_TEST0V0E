@@ -25,6 +25,16 @@ log = get_logger(__name__)
 
 ERROR_PREFIX = "ОШИБКА:"
 _REMINDER_WORD = re.compile(r"напомн|напомин", re.I)
+_CHANGE_VERB = re.compile(
+    r"^\s*(?:пожалуйста[,\s]+)?(?:перенеси|перенести|передвинь|переставь|сдвинь|измени|изменить|"
+    r"поменяй|обнови|переименуй|отметь|удали|убери)\s+",
+    re.I,
+)
+_TIME_TAIL = re.compile(
+    r"\s+(?:на|в|к|до)\s+\d{1,2}(?::\d{2})?|\s+(?:на\s+)?(?:сегодня|завтра|послезавтра|"
+    r"понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)\b.*$",
+    re.I,
+)
 # A day holds a handful of records; a month or "all" must not render a wall of cards.
 LIST_LIMIT = 25
 _ISO_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y")
@@ -107,6 +117,12 @@ class ToolExecutor:
         if not self._utterance:
             return True
         return self._hint.has_time or looks_like_time(self._utterance)
+
+    def _utterance_query(self) -> str:
+        """The record name, taken from the user's words when the model supplied none."""
+        text = _CHANGE_VERB.sub("", self._utterance.strip())
+        text = _TIME_TAIL.sub("", text)
+        return " ".join(text.split()).strip(" .,!?;:")
 
     def _resolve(self, moment: datetime | None, *, date_only: time | None = None) -> datetime | None:
         """Overlay the user's date and time on the moment the model proposed."""
@@ -383,6 +399,8 @@ class ToolExecutor:
         event = await self._events.get_for_user(self._user.id, event_id) if event_id else None
         if event is None:
             query = self._text(arguments.get("query")) or self._text(arguments.get("target_title"))
+            if not query and self._utterance:
+                query = self._utterance_query() or None
             if query:
                 candidates = await self._events.search(self._user.id, query, limit=3)
                 if candidates:

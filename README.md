@@ -154,7 +154,7 @@ docker compose up --build
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q        # 315 passed, 1 skipped
+python -m pytest -q        # 318 passed, 1 skipped
 
 cd frontend && pnpm test   # 181 passed
 ```

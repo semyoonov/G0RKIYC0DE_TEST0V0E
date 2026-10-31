@@ -160,6 +160,26 @@ async def test_dated_task_is_not_turned_into_a_reminder(session, user, settings)
     assert result.events[0].type is EventType.TASK
 
 
+async def test_update_without_id_uses_the_name_the_user_said(session, user, settings):
+    now = datetime.now(MOSCOW)
+    repository = EventRepository(session)
+    target = await repository.create(
+        user.id,
+        EventCreate(type=EventType.MEETING, title="встреча с командой", starts_at=now + timedelta(days=1)),
+    )
+    await repository.create(
+        user.id,
+        EventCreate(type=EventType.MEETING, title="Планёрка команды", starts_at=now + timedelta(days=21)),
+    )
+    executor = ToolExecutor(session, user, settings, None, utterance="Перенеси встречу с командой на 18:00")
+
+    result = await executor.execute("update_event", {"starts_at": "2026-11-01T18:00:00+03:00"})
+
+    assert not result.failed
+    assert result.events[0].id == target.id
+    assert result.events[0].starts_at.astimezone(MOSCOW).hour == 18
+
+
 async def test_search_prefers_the_nearer_record_when_names_tie(session, user):
     repository = EventRepository(session)
     now = datetime.now(MOSCOW)
