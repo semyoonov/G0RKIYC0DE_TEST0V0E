@@ -239,8 +239,6 @@ class EventRepository(BaseRepository[Event]):
     ) -> list[Event]:
         normalized_query = (query or "").lower().replace("ё", "е")
         tokens = [token for token in _WORD_RE.findall(normalized_query) if token not in _SEARCH_STOPWORDS]
-        if not tokens:
-            return []
         wanted_type = _type_from_query(query)
 
         base_filter = [
@@ -249,6 +247,12 @@ class EventRepository(BaseRepository[Event]):
         ]
         if not include_done:
             base_filter.append(Event.status == EventStatus.PENDING)
+
+        if not tokens:
+            # «покажи встречи»: значимых слов нет, но тип записи назван — отдаём ближайшие такого типа.
+            if wanted_type is None:
+                return []
+            return await self._by_type(user_id, wanted_type, limit, include_done)
 
         token_conditions = []
         for token in tokens:
@@ -274,6 +278,42 @@ class EventRepository(BaseRepository[Event]):
         if not matches:
             return []
         return self._rank(matches, tokens, normalized_query, wanted_type)[:limit]
+
+    async def _by_type(
+        self,
+        user_id: int,
+        event_type: EventType,
+        limit: int,
+        include_done: bool,
+    ) -> list[Event]:
+        """Ближайшие записи одного типа: будущие по возрастанию, затем прошедшие по убыванию."""
+        moment = to_db(utcnow())
+        filters = [Event.user_id == user_id, Event.status != EventStatus.CANCELLED, Event.type == event_type]
+        if not include_done:
+            filters.append(Event.status == EventStatus.PENDING)
+
+        found: list[Event] = []
+        upcoming = await self.session.execute(
+            select(Event)
+            .where(*filters, Event.starts_at.is_not(None), Event.starts_at >= moment)
+            .order_by(Event.starts_at.asc())
+            .limit(limit)
+        )
+        found.extend(upcoming.scalars().all())
+        if len(found) < limit:
+            past = await self.session.execute(
+                select(Event)
+                .where(*filters, Event.starts_at.is_not(None), Event.starts_at < moment)
+                .order_by(Event.starts_at.desc())
+                .limit(limit - len(found))
+            )
+            found.extend(past.scalars().all())
+        if len(found) < limit:
+            undated = await self.session.execute(
+                select(Event).where(*filters, Event.starts_at.is_(None)).limit(limit - len(found))
+            )
+            found.extend(undated.scalars().all())
+        return found
 
     @staticmethod
     def _rank(

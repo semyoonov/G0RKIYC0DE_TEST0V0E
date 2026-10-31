@@ -101,6 +101,38 @@ async def test_search_ignores_stopwords_and_cancelled(session, user):
     assert await repository.search(user.id, "и") == []
 
 
+async def test_search_by_type_word_returns_nearest_records(session, user):
+    repository = EventRepository(session)
+    now = datetime.now(MOSCOW)
+    past = await repository.create(
+        user.id, EventCreate(type=EventType.MEETING, title="Планёрка вчера", starts_at=now - timedelta(days=1))
+    )
+    soon = await repository.create(
+        user.id, EventCreate(type=EventType.MEETING, title="Встреча с Иваном", starts_at=now + timedelta(hours=1))
+    )
+    later = await repository.create(
+        user.id, EventCreate(type=EventType.MEETING, title="Созвон по релизу", starts_at=now + timedelta(days=2))
+    )
+    undated = await repository.create(user.id, EventCreate(type=EventType.MEETING, title="Встреча без даты"))
+    await repository.create(user.id, EventCreate(type=EventType.TASK, title="Проверить отчёт", starts_at=now))
+
+    found = await repository.search(user.id, "покажи встречи")
+    assert [event.id for event in found] == [soon.id, later.id, past.id, undated.id]
+    assert [event.id for event in await repository.search(user.id, "встречи", limit=2)] == [soon.id, later.id]
+    assert [event.title for event in await repository.search(user.id, "задачи")] == ["Проверить отчёт"]
+    assert await repository.search(user.id, "напоминания") == []
+    # значимое слово рядом со словом типа по-прежнему ищет по названию, а не по одному типу
+    assert [event.title for event in await repository.search(user.id, "найди встречу с Иваном")] == ["Встреча с Иваном"]
+
+
+async def test_search_without_type_or_keywords_returns_nothing(session, user):
+    repository = EventRepository(session)
+    await repository.create(user.id, EventCreate(type=EventType.TASK, title="Позвонить Ивану", starts_at=NOW))
+
+    assert await repository.search(user.id, "записи") == []
+    assert await repository.search(user.id, "") == []
+
+
 async def test_due_reminders_are_delivered_once(session, user):
     repository = EventRepository(session)
     event = await repository.create(

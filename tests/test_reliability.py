@@ -139,19 +139,20 @@ async def test_reminder_without_a_named_time_is_not_created(session, user, setti
 
 async def test_list_reply_is_compact_and_free_of_descriptions(session, user, settings):
     repository = EventRepository(session)
-    now = datetime.now(MOSCOW)
+    # Обе записи — внутри текущих суток при любом часе запуска: иначе теперь+3ч уезжает на завтра.
+    day_start = datetime.now(MOSCOW).replace(hour=0, minute=0, second=0, microsecond=0)
     await repository.create(
         user.id,
         EventCreate(
             type=EventType.MEETING,
             title="встреча с командой",
             description="Обсудить спринт и релиз",
-            starts_at=now + timedelta(hours=2),
+            starts_at=day_start + timedelta(hours=10),
         ),
     )
     await repository.create(
         user.id,
-        EventCreate(type=EventType.TASK, title="проверить отчёт", starts_at=now + timedelta(hours=3)),
+        EventCreate(type=EventType.TASK, title="проверить отчёт", starts_at=day_start + timedelta(hours=11)),
     )
     executor = ToolExecutor(session, user, settings, None)
 
