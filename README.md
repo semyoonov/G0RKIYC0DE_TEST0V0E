@@ -56,45 +56,46 @@
 ## 🚀 Быстрый старт
 [К содержанию](#toc)
 
-### 1. Локальный запуск
+### 1. Запуск в Docker
 
-Нужны Python 3.11+, Node 22+ и pnpm 9 (`corepack enable` включит версию из `package.json`),
-а также `ffmpeg` и `espeak-ng` — они нужны голосовому режиму и локальной озвучке.
+Нужен только Docker с Compose. Node, pnpm, ffmpeg, espeak-ng и модель Vosk ставить не нужно:
+SPA собирается в образе, модель и системные пакеты уже внутри.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-cd frontend && pnpm install && pnpm build && cd ..
-
-cp .env.example .env
-# чтобы не поднимать PostgreSQL и Redis, в .env достаточно указать:
-#   DATABASE_URL=sqlite+aiosqlite:///./gorkycode.db
-#   CACHE_ENABLED=false
-
-python main.py
+cp .env.example .env          # заполните токены ботов и ключи GigaChat / SaluteSpeech
+docker compose up --build     # приложение, PostgreSQL 16 и Redis 7
 ```
 
-Приложение поднимает веб-интерфейс на `http://localhost:8000`, страница чата — `/`.
-SQLite и отключённый Redis позволяют запустить сервис без инфраструктуры, но ответы строит
-GigaChat: пока не задан `GIGACHAT_CREDENTIALS`, на каждый запрос приходит сообщение
-«GigaChat не настроен…», а в лог пишется предупреждение.
+Веб-интерфейс — `http://localhost:8000`, страница чата `/`. Проверка живости:
+`curl localhost:8000/healthz` → `{"status":"ok"}`.
 
-Для разработки фронтенда: `cd frontend && pnpm dev` — Vite поднимается на
-`http://localhost:5173` и проксирует `/api` и `/ws` на приложение. Production-сборка
-(`pnpm build`) кладётся в `frontend/dist`, её раздаёт FastAPI.
+Что происходит при старте: `docker compose` поднимает `postgres` и `redis` с healthcheck'ами,
+затем `app` ждёт их готовности, контейнер выполняет `alembic upgrade head` и запускает
+`python main.py`. Схема БД создаётся миграциями, данные PostgreSQL лежат в volume `pgdata`.
+`DATABASE_URL` и `REDIS_URL` подставляет `docker-compose.yml` (сервисы `postgres` и `redis`),
+поэтому адреса `localhost` из `.env` в контейнере не используются.
+
+```bash
+docker compose logs -f app      # логи приложения
+docker compose down             # остановить
+docker compose down -v          # остановить и удалить базу
+```
+
+Без `GIGACHAT_CREDENTIALS` сервис поднимается и работает, но на каждый запрос отвечает
+«GigaChat не настроен…» — текст и голос без ключа модели не отвечают. Ключи и адреса почты
+не обязательны: вход в веб — гостевая сессия, аккаунт заводится сам.
+
+Образ собирается в два этапа: Node-стадия выполняет `pnpm build` и отдаёт готовую SPA
+в `frontend/dist`, Python-стадия ставит системные пакеты, скачивает `vosk-model-small-ru-0.22`
+и запускает FastAPI, который раздаёт эту же сборку.
 
 ### 2. Голос
 
-Нужен `ffmpeg` в системе и модель Vosk:
+В образе уже есть `ffmpeg`, `espeak-ng` и модель Vosk — отдельных установок не нужно.
+Если модель понадобилась вне контейнера, её кладут в `models/` из
+`https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip`.
 
-```bash
-curl -L https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip -o /tmp/vosk.zip
-unzip -q /tmp/vosk.zip -d models/
-```
-
-Голосовые сообщения принимаются в Telegram,VK, MAX и в веб-интерфейсе (кнопка записи).
+Голосовые сообщения принимаются в Telegram, ВКонтакте, MAX и в веб-интерфейсе (кнопка записи).
 Распознавание выполняет официальный Python-биндинг Vosk из
 [alphacep/vosk-api](https://github.com/alphacep/vosk-api) (`vosk==0.3.45`): файлы и живой поток
 идут через один и тот же `KaldiRecognizer`.
@@ -113,9 +114,9 @@ unzip -q /tmp/vosk.zip -d models/
   при `TTS_BACKEND=sber`; `TTS_BACKEND=local` оставляет офлайновый espeak-ng.
 * Для запросов к API Сбера нужен корневой сертификат Минцифры: установите его в систему либо
   укажите `SBER_CA_BUNDLE=/путь/к/сертификату.pem`. `GIGACHAT_VERIFY_SSL=false` — только для отладки.
-* Миграции: `alembic upgrade head`. `AUTO_CREATE_TABLES=true` создаёт схему с нуля по моделям —
-  это режим для чистой локальной базы; уже существующую базу обновляет только
-  `alembic upgrade head` (контейнер выполняет её при старте).
+* Миграции: `alembic upgrade head` — контейнер выполняет её при каждом старте.
+  `AUTO_CREATE_TABLES=true` дополнительно создаёт схему по моделям на пустой базе; на живой базе
+  схему меняют только миграции.
 
 ### 4. Гостевой режим, вход по почте и паролю, привязка аккаунтов
 
@@ -138,23 +139,11 @@ unzip -q /tmp/vosk.zip -d models/
 показывают работающий сценарий сразу, без ручного заполнения (в чате записи видны в ответ на
 «Что у меня сегодня?»). Заполнение отключается `DEMO_SEED_ENABLED=false`.
 
-### 5. Полный стек (PostgreSQL + Redis + приложение)
-
-```bash
-cp .env.example .env   # заполните токены ботов и API
-docker compose up --build
-```
-
-Модель Vosk скачивается на этапе сборки образа; контейнер при старте применяет
-`alembic upgrade head` — так стенд не зависит от сети в момент запуска.
-Образ собирается в два этапа: Node-стадия выполняет `pnpm build`, готовая SPA попадает
-в `frontend/dist` внутри контейнера.
-
-### 6. Тесты
+### 5. Тесты
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q        # 297 passed, 1 skipped
+python -m pytest -q        # 301 passed, 1 skipped
 
 cd frontend && pnpm test   # 181 passed
 ```
@@ -286,14 +275,14 @@ ToolExecutor → EventRepository → ответ → SaluteSpeech → аудио`
 Даты в БД хранятся в UTC без часового пояса, в человеческий вид переводятся в `app/core/timeutils.py`
 по `TIMEZONE` (по умолчанию `Europe/Moscow`).
 
-**Что берёт на себя код.** Понимание фразы целиком на GigaChat: он возвращает абсолютную дату в
-`starts_at` и отдельно два факта — `weekday_named` (какой день недели назвал пользователь) и
-`time_named` (прозвучало ли время). Код только выравнивает дату по названному дню недели, ставит
-конец дня задаче без времени и задаёт уточняющий вопрос, если время не звучало: придуманное моделью
-время не проходит. `app/ai/nlp/scope.py` до вызова модели отказывает просьбам вне продукта
-(рецепты, код, «игнорируй инструкции»), а `app/ai/llm/replies.py` вычищает из ответа случайно
-сериализованный вызов инструмента и не пускает его в историю диалога — иначе модель повторяет такую
-форму в следующих репликах.
+**Как понимается время.** Отдельным узким вызовом GigaChat возвращает только факты: названа ли
+дата и какая, назван ли день недели, названо ли время, о какой записи идёт речь
+(`app/ai/llm/temporal.py`). Ответ пользователю строит второй вызов — уже с инструментами. Код не
+разбирает реплику шаблонами: он складывает дату и время (`moment_from_facts`), ставит конец дня
+задаче без названного времени и задаёт уточняющий вопрос, когда времени не было. `app/ai/nlp/scope.py`
+до вызова модели отказывает просьбам вне продукта (рецепты, код, «игнорируй инструкции»), а
+`app/ai/llm/replies.py` вычищает из ответа случайно сериализованный вызов инструмента и не пускает
+его в историю диалога — иначе модель повторяет такую форму в следующих репликах.
 
 ---
 

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.llm.prompts import format_event_line, format_event_list
+from app.ai.llm.temporal import TemporalFacts, extract_temporal, moment_from_facts
 from app.core.config import Settings
 from app.core.exceptions import AssistantError
 from app.core.logger import get_logger
@@ -31,31 +32,6 @@ _PERIOD_TITLES = {
     Period.ALL: "весь период",
     Period.CUSTOM: "указанный период",
 }
-
-_WEEKDAY_INDEX = {
-    "понедельник": 0,
-    "вторник": 1,
-    "среда": 2,
-    "четверг": 3,
-    "пятница": 4,
-    "суббота": 5,
-    "воскресенье": 6,
-}
-
-
-def _weekday_index(value: Any) -> int | None:
-    if not isinstance(value, str):
-        return None
-    return _WEEKDAY_INDEX.get(value.strip().lower())
-
-
-def _align_weekday(moment: datetime | None, index: int | None) -> datetime | None:
-    """The user's weekday decides the date; code only does the arithmetic."""
-    if moment is None or index is None:
-        return moment
-    delta = (index - moment.weekday()) % 7
-    return moment + timedelta(days=delta) if delta else moment
-
 
 _ISO_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y")
 
@@ -108,16 +84,31 @@ class ToolExecutor:
         user: User,
         settings: Settings,
         cache: CacheService | None = None,
+        llm: Any | None = None,
+        utterance: str = "",
     ) -> None:
         self._session = session
         self._user = user
         self._settings = settings
         self._cache = cache
         self._events = EventRepository(session)
+        self._llm = llm
+        self._utterance = utterance or ""
+        self._facts_loaded = False
+        self._facts_cache: TemporalFacts | None = None
 
     @property
     def tz(self) -> ZoneInfo:
         return self._settings.tz
+
+    async def _facts(self) -> TemporalFacts | None:
+        if self._facts_loaded:
+            return self._facts_cache
+        self._facts_loaded = True
+        if self._llm is None or not self._utterance:
+            return None
+        self._facts_cache = await extract_temporal(self._llm, self._utterance, datetime.now(self.tz))
+        return self._facts_cache
 
     @staticmethod
     def _time_named(arguments: dict[str, Any]) -> bool:
@@ -209,15 +200,15 @@ class ToolExecutor:
     async def _create_task(self, arguments: dict[str, Any]) -> ToolResult:
         title = self._text(arguments.get("title"))
         is_reminder = bool(arguments.get("is_reminder"))
-        time_named = self._time_named(arguments)
+        facts = await self._facts()
+        time_named = facts.has_time if facts is not None else self._time_named(arguments)
         if self._is_empty_or_generic_task_title(title, is_reminder=is_reminder):
             if is_reminder:
                 return self._error("create_task", "как назвать напоминание? Уточни, о чём напомнить.")
             return self._error("create_task", "как назвать задачу? Уточни, что именно нужно сделать.")
-        starts_at = _align_weekday(
-            parse_datetime(arguments.get("starts_at"), self.tz),
-            _weekday_index(arguments.get("weekday_named")),
-        )
+        starts_at = parse_datetime(arguments.get("starts_at"), self.tz)
+        if facts is not None:
+            starts_at = moment_from_facts(facts, starts_at, now=datetime.now(self.tz))
         remind_at = parse_datetime(arguments.get("remind_at"), self.tz)
         event_type = EventType.REMINDER if is_reminder else EventType.TASK
         if is_reminder:
@@ -301,12 +292,13 @@ class ToolExecutor:
         title = self._text(arguments.get("title"))
         if self._is_empty_or_generic_meeting_title(title):
             return self._error("create_meeting", "как назвать встречу?")
-        if not self._time_named(arguments):
+        facts = await self._facts()
+        time_named = facts.has_time if facts is not None else self._time_named(arguments)
+        if not time_named:
             return self._error("create_meeting", "на какое время поставить встречу?")
-        starts_at = _align_weekday(
-            parse_datetime(arguments.get("starts_at"), self.tz),
-            _weekday_index(arguments.get("weekday_named")),
-        )
+        starts_at = parse_datetime(arguments.get("starts_at"), self.tz)
+        if facts is not None:
+            starts_at = moment_from_facts(facts, starts_at, now=datetime.now(self.tz))
         if starts_at is None:
             return self._error("create_meeting", "на какое время поставить встречу?")
 
@@ -397,6 +389,9 @@ class ToolExecutor:
         event = await self._events.get_for_user(self._user.id, event_id) if event_id else None
         if event is None:
             query = self._text(arguments.get("query")) or self._text(arguments.get("target_title"))
+            if not query:
+                known = await self._facts()
+                query = known.subject if known is not None else None
             if query:
                 candidates = await self._events.search(self._user.id, query, limit=3)
                 if candidates:
@@ -415,14 +410,13 @@ class ToolExecutor:
             payload["description"] = self._text(arguments.get("description"))
         if "rrule" in arguments:
             payload["rrule"] = self._text(arguments.get("rrule"))
+        facts = await self._facts()
         for field_name in ("starts_at", "remind_at"):
             if field_name in arguments:
                 payload[field_name] = parse_datetime(arguments.get(field_name), self.tz)
-        weekday = _weekday_index(arguments.get("weekday_named"))
-        if weekday is not None:
+        if facts is not None and (facts.has_date or facts.has_time):
             anchor = payload.get("starts_at") or event.starts_at
-            if anchor is not None:
-                payload["starts_at"] = _align_weekday(anchor, weekday)
+            payload["starts_at"] = moment_from_facts(facts, anchor, now=datetime.now(self.tz))
 
         active_rrule = payload.get("rrule") or event.rrule
         if active_rrule:

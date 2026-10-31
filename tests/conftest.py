@@ -20,6 +20,7 @@ def settings() -> Settings:
         max_bot_token="",
         timezone="Europe/Moscow",
         demo_seed_enabled=False,
+        temporal_extraction_enabled=False,
     )
 
 

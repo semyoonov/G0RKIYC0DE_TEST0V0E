@@ -282,7 +282,14 @@ class AssistantService:
     ) -> AssistantResponse:
         async with self._session_factory() as session:
             user = await self._users(session).get_or_create(platform, external_user_id)
-            executor = ToolExecutor(session, user, self._settings, self._cache)
+            executor = ToolExecutor(
+                session,
+                user,
+                self._settings,
+                self._cache,
+                llm=self._llm if self._settings.temporal_extraction_enabled else None,
+                utterance=text,
+            )
             # End the read transaction so the connection is not held during model and messenger calls.
             await session.commit()
             answer, events, intent = await self._run_llm(user.id, text, executor, closing=closing)

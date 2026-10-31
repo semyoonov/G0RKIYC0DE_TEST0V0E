@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     reminder_lookahead_seconds: int = 60
 
     tool_max_iterations: int = 4
+    temporal_extraction_enabled: bool = True
     default_event_duration_minutes: int = 60
 
     @property

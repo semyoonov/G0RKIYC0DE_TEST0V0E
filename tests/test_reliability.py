@@ -1,11 +1,18 @@
 """The assistant must not invent times, lose actions or echo tool calls."""
 
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
 from app.ai.assistant import AssistantService, _humanize
 from app.ai.llm.gigachat_client import ChatCompletion
+from app.ai.llm.temporal import (
+    TemporalFacts,
+    facts_from_payload,
+    moment_from_facts,
+    weekday_date,
+)
 from app.ai.llm.tool_executor import ToolExecutor
 from app.domain.enums import EventType, Platform
 from app.domain.models import EventCreate
@@ -27,6 +34,18 @@ class ScriptedLLM:
         return ChatCompletion(content="Готово.")
 
 
+class FactsLLM:
+    """Stands in for the narrow extraction call."""
+
+    def __init__(self, **facts) -> None:
+        self.facts = facts
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs) -> ChatCompletion:
+        self.calls += 1
+        return ChatCompletion(content=json.dumps(self.facts, ensure_ascii=False))
+
+
 class RecordingCache:
     def __init__(self) -> None:
         self.stored: list[dict] = []
@@ -44,11 +63,12 @@ async def user(session):
 
 
 async def test_meeting_without_a_named_time_asks_instead_of_inventing_one(session, user, settings):
-    executor = ToolExecutor(session, user, settings, None)
+    llm = FactsLLM(has_date=True, date="2026-11-01", has_time=False, time=None)
+    executor = ToolExecutor(session, user, settings, None, llm=llm, utterance="Поставь встречу с Иваном завтра")
 
     result = await executor.execute(
         "create_meeting",
-        {"title": "с Иваном", "starts_at": "2026-11-01T10:00:00+03:00", "time_named": False},
+        {"title": "с Иваном", "starts_at": "2026-11-01T10:00:00+03:00"},
     )
 
     assert result.failed
@@ -56,18 +76,16 @@ async def test_meeting_without_a_named_time_asks_instead_of_inventing_one(sessio
     assert result.events == []
 
 
-async def test_meeting_lands_on_the_weekday_the_model_reported(session, user, settings):
-    executor = ToolExecutor(session, user, settings, None)
+async def test_meeting_lands_on_the_weekday_the_extraction_reported(session, user, settings):
+    llm = FactsLLM(has_date=False, date=None, has_time=True, time="11:00", weekday="четверг")
+    executor = ToolExecutor(
+        session, user, settings, None, llm=llm, utterance="В четверг в 11 у меня встреча с дизайнером"
+    )
 
-    # The model proposed Monday; the user said Thursday.
+    # The chat model proposed Monday; the extraction says Thursday.
     result = await executor.execute(
         "create_meeting",
-        {
-            "title": "с дизайнером",
-            "starts_at": "2026-11-02T11:00:00+03:00",
-            "weekday_named": "четверг",
-            "time_named": True,
-        },
+        {"title": "с дизайнером", "starts_at": "2026-11-02T11:00:00+03:00"},
     )
 
     assert not result.failed
@@ -77,16 +95,12 @@ async def test_meeting_lands_on_the_weekday_the_model_reported(session, user, se
 
 
 async def test_task_with_a_named_day_keeps_no_invented_clock_time(session, user, settings):
-    executor = ToolExecutor(session, user, settings, None)
+    llm = FactsLLM(has_date=True, date=None, has_time=False, time=None, weekday="пятница")
+    executor = ToolExecutor(session, user, settings, None, llm=llm, utterance="В пятницу нужно отправить отчет")
 
     result = await executor.execute(
         "create_task",
-        {
-            "title": "отправить отчет",
-            "starts_at": "2026-11-03T19:00:00+03:00",  # model invented Tuesday 19:00
-            "weekday_named": "пятница",
-            "time_named": False,
-        },
+        {"title": "отправить отчет", "starts_at": "2026-11-03T19:00:00+03:00"},  # model invented Tuesday 19:00
     )
 
     assert not result.failed
@@ -97,11 +111,12 @@ async def test_task_with_a_named_day_keeps_no_invented_clock_time(session, user,
 
 
 async def test_reminder_without_a_named_time_is_not_created(session, user, settings):
-    executor = ToolExecutor(session, user, settings, None)
+    llm = FactsLLM(has_date=False, date=None, has_time=False, time=None)
+    executor = ToolExecutor(session, user, settings, None, llm=llm, utterance="Напомни позвонить Ивану")
 
     result = await executor.execute(
         "create_task",
-        {"title": "позвонить Ивану", "is_reminder": True, "time_named": False},
+        {"title": "позвонить Ивану", "is_reminder": True},
     )
 
     assert result.failed
@@ -232,3 +247,36 @@ def _factory(session):
         yield session
 
     return factory
+
+
+def test_weekday_date_is_the_next_occurrence():
+    today = date(2026, 10, 31)  # Saturday
+
+    assert weekday_date("четверг", today) == date(2026, 11, 5)
+    assert weekday_date("суббота", today) == date(2026, 10, 31)
+    assert weekday_date("не день", today) is None
+
+
+def test_moment_from_facts_keeps_the_day_for_a_bare_time():
+    now = datetime(2026, 10, 31, 19, 8, tzinfo=MOSCOW)
+    facts = facts_from_payload({"has_date": False, "has_time": True, "time": "18:00"})
+
+    moment = moment_from_facts(facts, datetime(2026, 11, 5, 9, 0, tzinfo=MOSCOW), now=now)
+
+    assert moment == datetime(2026, 11, 5, 18, 0, tzinfo=MOSCOW)
+
+
+def test_moment_from_facts_uses_the_weekday_when_no_date_was_given():
+    now = datetime(2026, 10, 31, 19, 8, tzinfo=MOSCOW)
+    facts = TemporalFacts(has_time=True, time=time(11, 0), weekday="четверг")
+
+    moment = moment_from_facts(facts, None, now=now)
+
+    assert moment == datetime(2026, 11, 5, 11, 0, tzinfo=MOSCOW)
+
+
+def test_facts_from_payload_ignores_unknown_weekday():
+    facts = facts_from_payload({"weekday": "лунный день", "has_date": True, "date": "2026-11-06"})
+
+    assert facts.weekday is None
+    assert facts.date == date(2026, 11, 6)
