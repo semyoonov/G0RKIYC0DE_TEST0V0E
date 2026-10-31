@@ -1,13 +1,14 @@
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable
-from zoneinfo import ZoneInfo
-
 import json
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import datetime, time, timedelta
+from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.llm.prompts import format_event_line, format_event_list
+from app.ai.nlp.ru_time import TemporalHint, apply_hint, looks_like_time, parse_temporal
 from app.core.config import Settings
 from app.core.exceptions import AssistantError
 from app.core.logger import get_logger
@@ -22,6 +23,8 @@ from app.services.cache.redis_service import CacheService
 log = get_logger(__name__)
 
 ERROR_PREFIX = "ОШИБКА:"
+# A day holds a handful of records; a month or "all" must not render a wall of cards.
+LIST_LIMIT = 25
 _ISO_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y")
 _PERIOD_TITLES = {
     Period.TODAY: "сегодня",
@@ -80,16 +83,39 @@ class ToolExecutor:
         user: User,
         settings: Settings,
         cache: CacheService | None = None,
+        utterance: str = "",
     ) -> None:
         self._session = session
         self._user = user
         self._settings = settings
         self._cache = cache
         self._events = EventRepository(session)
+        self._utterance = utterance or ""
+        self._hint = parse_temporal(self._utterance, datetime.now(settings.tz), settings.tz)
 
     @property
     def tz(self) -> ZoneInfo:
         return self._settings.tz
+
+    def _user_named_time(self) -> bool:
+        """True when the user's own words contain a clock time.
+
+        A time the model made up must never silence a clarifying question.
+        """
+        if not self._utterance:
+            return True
+        return self._hint.has_time or looks_like_time(self._utterance)
+
+    def _resolve(self, moment: datetime | None, *, date_only: time | None = None) -> datetime | None:
+        """Overlay the user's date and time on the moment the model proposed."""
+        hint: TemporalHint = self._hint
+        if not hint.applies():
+            return moment
+        if moment is None:
+            if hint.date is None or (hint.time is None and date_only is None):
+                return None
+            return datetime.combine(hint.date, hint.time or date_only, tzinfo=self.tz)
+        return apply_hint(moment, hint)
 
     async def execute(self, name: str, arguments: dict[str, Any] | str) -> ToolResult:
         handler = self._handlers().get(name)
@@ -103,7 +129,7 @@ class ToolExecutor:
         except AssistantError as error:
             log.warning("tool %s failed: %s", name, error)
             return self._error(name, str(error))
-        except Exception:  # noqa: BLE001 - a tool failure must not break the dialogue
+        except Exception:
             log.exception("tool %s crashed", name)
             return self._error(name, "не получилось выполнить действие, попробуйте ещё раз")
 
@@ -175,13 +201,20 @@ class ToolExecutor:
             if is_reminder:
                 return self._error("create_task", "как назвать напоминание? Уточни, о чём напомнить.")
             return self._error("create_task", "как назвать задачу? Уточни, что именно нужно сделать.")
-        starts_at = parse_datetime(arguments.get("starts_at"), self.tz)
-        remind_at = parse_datetime(arguments.get("remind_at"), self.tz)
+        model_starts = parse_datetime(arguments.get("starts_at"), self.tz)
+        if self._hint.explicit_date and not self._hint.has_time:
+            # The user named a day only; a clock time the model added is not evidence.
+            model_starts = None
+        starts_at = self._resolve(model_starts, date_only=time(23, 59))
+        remind_at = self._resolve(parse_datetime(arguments.get("remind_at"), self.tz))
         event_type = EventType.REMINDER if is_reminder else EventType.TASK
-        if is_reminder and remind_at is None:
-            remind_at = starts_at
-        if is_reminder and remind_at is None:
-            return self._error("create_task", "на какое время поставить напоминание?")
+        if is_reminder:
+            if not self._user_named_time():
+                return self._error("create_task", "на какой день и время поставить напоминание?")
+            if remind_at is None:
+                remind_at = starts_at
+            if remind_at is None:
+                return self._error("create_task", "на какой день и время поставить напоминание?")
         if starts_at is None and remind_at is not None:
             starts_at = remind_at
 
@@ -217,7 +250,10 @@ class ToolExecutor:
         }
         content = f"{verbs[event_type]} «{title}»"
         if starts_at is not None:
-            content += f" — {format_datetime(starts_at, self.tz)}"
+            if self._hint.has_date and not self._hint.has_time:
+                content += f" — {starts_at.astimezone(self.tz):%d.%m.%Y} (время не указано)"
+            else:
+                content += f" — {format_datetime(starts_at, self.tz)}"
         content += "."
         if remind_at is not None and remind_at != starts_at:
             content += f" Напомню {format_datetime(remind_at, self.tz)}."
@@ -251,7 +287,9 @@ class ToolExecutor:
         title = self._text(arguments.get("title"))
         if self._is_empty_or_generic_meeting_title(title):
             return self._error("create_meeting", "как назвать встречу?")
-        starts_at = parse_datetime(arguments.get("starts_at"), self.tz)
+        starts_at = self._resolve(parse_datetime(arguments.get("starts_at"), self.tz))
+        if not self._user_named_time():
+            return self._error("create_meeting", "на какое время поставить встречу?")
         if starts_at is None:
             return self._error("create_meeting", "на какое время поставить встречу?")
 
@@ -310,7 +348,7 @@ class ToolExecutor:
             cached = await self._cache.get_json(cache_key)
             if cached is not None:
                 events = [EventRead.model_validate(item) for item in cached]
-                return ToolResult("list_events", self._period_content(events, period), events)
+                return ToolResult("list_events", self._period_content(events, period), events[:LIST_LIMIT])
 
         events = await self._events.list_for_period(
             self._user.id,
@@ -322,7 +360,7 @@ class ToolExecutor:
         read_events = [to_read(event) for event in events]
         if self._cache is not None and cache_key is not None:
             await self._cache.set_json(cache_key, [event.model_dump(mode="json") for event in read_events])
-        return ToolResult("list_events", self._period_content(read_events, period), read_events)
+        return ToolResult("list_events", self._period_content(read_events, period), read_events[:LIST_LIMIT])
 
     async def _search_events(self, arguments: dict[str, Any]) -> ToolResult:
         query = self._text(arguments.get("query"))
@@ -360,7 +398,11 @@ class ToolExecutor:
             payload["rrule"] = self._text(arguments.get("rrule"))
         for field_name in ("starts_at", "remind_at"):
             if field_name in arguments:
-                payload[field_name] = parse_datetime(arguments.get(field_name), self.tz)
+                payload[field_name] = self._resolve(parse_datetime(arguments.get(field_name), self.tz))
+        if self._hint.applies() and "starts_at" in arguments:
+            payload["starts_at"] = self._resolve(payload.get("starts_at") or event.starts_at)
+        elif "starts_at" not in arguments and (self._hint.has_time or self._hint.explicit_date):
+            payload["starts_at"] = self._resolve(event.starts_at)
 
         active_rrule = payload.get("rrule") or event.rrule
         if active_rrule:
@@ -446,7 +488,11 @@ class ToolExecutor:
         if not events:
             return f"На {label} ничего не запланировано."
         header = f"Записи на {label}:"
-        return f"{header}\n{format_event_list(events, self.tz)}"
+        shown = events[:LIST_LIMIT]
+        content = f"{header}\n{format_event_list(shown, self.tz)}"
+        if len(events) > len(shown):
+            content += f"\n…и ещё {len(events) - len(shown)} записей."
+        return content
 
     def _cache_key(self, period: Period, start: datetime, end: datetime, types: list[EventType] | None) -> str | None:
         type_key = ",".join(sorted(event_type.value for event_type in types)) if types else "all"

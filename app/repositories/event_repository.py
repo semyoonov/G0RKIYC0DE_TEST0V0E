@@ -87,14 +87,65 @@ _SEARCH_STOPWORDS = frozenset(
 )
 
 
+_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "тз": ("техническое", "техзадание"),
+    "техзадание": ("техническое",),
+    "договор": ("контракт",),
+    "контракт": ("договор",),
+    "созвон": ("звонок", "позвонить"),
+    "звонок": ("созвон", "позвонить"),
+    "позвонить": ("созвон", "звонок"),
+    "отчет": ("отчётность",),
+    "отчетность": ("отчет",),
+    "планерка": ("совещание",),
+    "совещание": ("планерка",),
+    "подготовить": ("сделать",),
+    "подготовь": ("сделать", "подготовить"),
+    "сделать": ("подготовить",),
+    "купить": ("приобрести",),
+    "приобрести": ("купить",),
+    "презентация": ("презентацию", "доклад"),
+    "доклад": ("презентация",),
+    "встретиться": ("встреча",),
+}
+
+
+def _word_patterns(word: str) -> list[str]:
+    spellings = {word, word.replace("е", "ё"), word.replace("ё", "е")}
+    variants: list[str] = []
+    for spelling in spellings:
+        variants.extend([spelling, spelling.capitalize()])
+        for cut in (1, 2, 3):
+            if len(spelling) - cut >= 4:
+                stem = spelling[:-cut]
+                variants.extend([stem, stem.capitalize()])
+    return variants
+
+
 def _token_patterns(token: str) -> list[str]:
-    lowered = token.lower()
-    variants = [lowered, lowered.capitalize()]
-    for cut in (1, 2, 3):
-        if len(lowered) - cut >= 4:
-            stem = lowered[:-cut]
-            variants.extend([stem, stem.capitalize()])
+    variants: list[str] = []
+    for word in (token, *_SYNONYMS.get(token, ())):
+        variants.extend(_word_patterns(word))
     return [f"%{variant}%" for variant in dict.fromkeys(variants)]
+
+
+def _token_words(token: str) -> tuple[str, ...]:
+    return (token, *_SYNONYMS.get(token, ()))
+
+
+_TYPE_WORDS = (
+    (EventType.MEETING, ("встреч", "совещан", "созвон", "митинг")),
+    (EventType.REMINDER, ("напомин", "напомн")),
+    (EventType.TASK, ("задач", "дело", "дела", "сдел")),
+)
+
+
+def _type_from_query(query: str) -> EventType | None:
+    lowered = query.lower().replace("ё", "е")
+    for event_type, stems in _TYPE_WORDS:
+        if any(stem in lowered for stem in stems):
+            return event_type
+    return None
 
 
 class EventRepository(BaseRepository[Event]):
@@ -186,9 +237,11 @@ class EventRepository(BaseRepository[Event]):
         limit: int = 10,
         include_done: bool = True,
     ) -> list[Event]:
-        tokens = [token for token in _WORD_RE.findall(query.lower()) if token not in _SEARCH_STOPWORDS]
+        normalized_query = (query or "").lower().replace("ё", "е")
+        tokens = [token for token in _WORD_RE.findall(normalized_query) if token not in _SEARCH_STOPWORDS]
         if not tokens:
             return []
+        wanted_type = _type_from_query(query)
 
         base_filter = [
             Event.user_id == user_id,
@@ -207,46 +260,54 @@ class EventRepository(BaseRepository[Event]):
                 )
             )
 
-        # 1. Conjunction (all search terms match)
-        statement = (
-            select(Event)
-            .where(*base_filter, and_(*token_conditions))
-            .order_by(
-                Event.starts_at.is_(None),
-                Event.starts_at.desc(),
-                Event.created_at.desc(),
-            )
-            .limit(limit)
-        )
+        # All words match: precise, so a wide window is cheap.
+        statement = select(Event).where(*base_filter, and_(*token_conditions)).limit(max(limit * 10, 100))
         result = await self.session.execute(statement)
         matches = list(result.scalars().all())
-        if matches:
-            return matches
 
-        # 2. Fallback when extra words (e.g. weekdays, recurrence) are in the query
-        if len(tokens) > 1:
-            statement = (
-                select(Event)
-                .where(*base_filter, or_(*token_conditions))
-                .limit(max(limit * 3, 20))
-            )
+        if not matches and len(tokens) > 1:
+            # Fallback when the query carries words the record does not (weekdays, recurrence).
+            statement = select(Event).where(*base_filter, or_(*token_conditions)).limit(max(limit * 20, 400))
             result = await self.session.execute(statement)
-            candidates = list(result.scalars().all())
-            if candidates:
-                query_lower = query.lower().strip()
+            matches = list(result.scalars().all())
 
-                def rank_key(event: Event) -> tuple[int, int, bool, datetime]:
-                    t_lower = (event.title or "").lower().strip()
-                    title_match = 2 if (t_lower and (t_lower in query_lower or query_lower in t_lower)) else 0
-                    token_hits = sum(1 for t in tokens if t in t_lower)
-                    is_pending = event.status == EventStatus.PENDING
-                    created = event.created_at or datetime.min
-                    return (title_match, token_hits, is_pending, created)
+        if not matches:
+            return []
+        return self._rank(matches, tokens, normalized_query, wanted_type)[:limit]
 
-                candidates.sort(key=rank_key, reverse=True)
-                return candidates[:limit]
+    @staticmethod
+    def _rank(
+        events: list[Event],
+        tokens: list[str],
+        query_lower: str,
+        wanted_type: EventType | None,
+    ) -> list[Event]:
+        """Order by how well the record matches, never by how recent it is."""
 
-        return []
+        def score(event: Event) -> tuple[int, int, float]:
+            title = (event.title or "").lower().replace("ё", "е")
+            description = (event.description or "").lower().replace("ё", "е")
+            value = 0
+            for token in tokens:
+                for word in _token_words(token):
+                    stem = word[:-2] if len(word) > 5 else word
+                    if stem in title:
+                        value += 4
+                        break
+                    if stem in description:
+                        value += 1
+                        break
+            if query_lower and query_lower in title:
+                value += 6
+            if wanted_type is not None and event.type is wanted_type:
+                value += 3
+            if event.status is EventStatus.PENDING:
+                value += 1
+            recency = event.starts_at.timestamp() if event.starts_at is not None else 0.0
+            return (value, int(wanted_type is not None and event.type is wanted_type), recency)
+
+        decorated = sorted(((score(event), event) for event in events), key=lambda pair: pair[0], reverse=True)
+        return [event for _, event in decorated]
 
     async def upcoming(self, user_id: int, now: datetime | None = None, limit: int = 5) -> list[Event]:
         moment = to_db(now or utcnow())

@@ -43,7 +43,9 @@ export function ChatMessage({
   }
 
   const { reply } = entry;
-  const action = reply.intent ? ACTION_LABELS[reply.intent] : undefined;
+  // A failed or clarifying turn keeps its intent but carries no events; label only real outcomes.
+  const changed = reply.events.length > 0 || reply.intent === "delete_event";
+  const action = reply.intent && changed ? ACTION_LABELS[reply.intent] : undefined;
   const showCards = reply.events.length > 0 && reply.intent !== "delete_event";
   // Speech can arrive after the text (separate /api/speech request) or inline
   // with an older reply payload; both are rendered the same way.

@@ -6,8 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.llm.gigachat_client import ChatCompletion
 from app.ai.llm.prompts import build_system_prompt
+from app.ai.llm.replies import recover_calls, sanitize_reply
 from app.ai.llm.tool_executor import ERROR_PREFIX, ToolExecutor, to_read
 from app.ai.llm.tools import TOOLS_SCHEMA
+from app.ai.nlp.scope import OFF_TOPIC_REPLY, is_off_topic
 from app.core.config import Settings
 from app.core.exceptions import AssistantError, LLMError, NotFoundError
 from app.core.logger import get_logger
@@ -16,8 +18,8 @@ from app.domain.enums import EventStatus, Period, Platform
 from app.domain.models import AssistantResponse, EventRead, EventUpdate
 from app.repositories.event_repository import EventRepository
 from app.repositories.user_repository import UserRepository
-from app.services.demo_seed import seed_demo_events
 from app.services.cache.redis_service import CacheService
+from app.services.demo_seed import seed_demo_events
 
 log = get_logger(__name__)
 
@@ -36,7 +38,7 @@ _BLOCKED_FINISH_REASONS = frozenset({"blacklist", "content_filter", "sensitive"}
 
 
 def _humanize(answer: str) -> str:
-    return _ID_MARKER_RE.sub("", answer).strip()
+    return _ID_MARKER_RE.sub("", sanitize_reply(answer)).strip()
 
 
 def _normalize_audio_format(value: str | None) -> str | None:
@@ -122,6 +124,8 @@ class AssistantService:
         normalized = " ".join((text or "").split())
         if not normalized:
             return AssistantResponse(text=CLARIFICATION_TEXT, needs_clarification=True)
+        if is_off_topic(normalized):
+            return AssistantResponse(text=OFF_TOPIC_REPLY)
         if self._llm is None:
             return AssistantResponse(text=LLM_DISABLED_TEXT)
         try:
@@ -129,7 +133,7 @@ class AssistantService:
         except AssistantError as error:
             log.warning("assistant failed: %s", error)
             return AssistantResponse(text=ERROR_TEXT)
-        except Exception:  # noqa: BLE001 - transport errors must not reach the user as a traceback
+        except Exception:
             log.exception("assistant crashed")
             return AssistantResponse(text=ERROR_TEXT)
         if speak:
@@ -278,7 +282,7 @@ class AssistantService:
     ) -> AssistantResponse:
         async with self._session_factory() as session:
             user = await self._users(session).get_or_create(platform, external_user_id)
-            executor = ToolExecutor(session, user, self._settings, self._cache)
+            executor = ToolExecutor(session, user, self._settings, self._cache, utterance=text)
             # End the read transaction so the connection is not held during model and messenger calls.
             await session.commit()
             answer, events, intent = await self._run_llm(user.id, text, executor, closing=closing)
@@ -326,32 +330,51 @@ class AssistantService:
                 raise LLMError(f"GigaChat stopped the answer: {completion.finish_reason}")
 
             call = completion.function_call
+            recovered = []
             if call is None:
-                answer = completion.content.strip()
-                break
+                # GigaChat sometimes serialises the call into the text. Execute it
+                # instead of showing the JSON to the user and losing the action.
+                recovered, completion_content = recover_calls(completion.content or "")
+                if not recovered:
+                    answer = completion.content.strip()
+                    break
 
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": completion.content or "",
-                    "function_call": {"name": call.name, "arguments": call.arguments},
-                }
-            )
-            result = await executor.execute(call.name, call.arguments)
-            intent = call.name
-            collected.extend(result.events)
-            last_tool_content = result.content
-            messages.append(
-                {
-                    "role": "function",
-                    "name": call.name,
-                    # GigaChat rejects a plain sentence here: the function reply must be JSON.
-                    "content": json.dumps({"result": result.content}, ensure_ascii=False),
-                }
-            )
+            if call is not None:
+                calls: list[tuple[str, dict[str, Any] | str]] = [(call.name, call.arguments)]
+                echoed = completion.content or ""
+            else:
+                calls = [(item.name, item.arguments) for item in recovered]
+                echoed = ""
+
+            for name, arguments in calls:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": echoed,
+                        "function_call": {
+                            "name": name,
+                            "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False),
+                        },
+                    }
+                )
+                result = await executor.execute(name, arguments)
+                intent = name
+                collected.extend(result.events)
+                last_tool_content = result.content
+                messages.append(
+                    {
+                        "role": "function",
+                        "name": name,
+                        # GigaChat rejects a plain sentence here: the function reply must be JSON.
+                        "content": json.dumps({"result": result.content}, ensure_ascii=False),
+                    }
+                )
 
         if not answer:
             answer = self._strip_error(last_tool_content) if last_tool_content else CLARIFICATION_TEXT
+        answer = _humanize(answer)
+        if not answer and last_tool_content:
+            answer = _humanize(self._strip_error(last_tool_content))
         await self._save_history(user_id, text, answer)
         return answer, collected, intent
 
@@ -368,7 +391,7 @@ class AssistantService:
         limit = max(1, self._settings.conversation_history_turns) * 2
         try:
             entries = await self._cache.get_history(f"history:{user_id}", limit)
-        except Exception:  # noqa: BLE001 - a cache failure must not break the dialogue
+        except Exception:
             log.exception("cannot read dialogue history")
             return []
         return [
@@ -384,7 +407,7 @@ class AssistantService:
         try:
             await self._cache.push_history(f"history:{user_id}", {"role": "user", "content": request_text}, limit)
             await self._cache.push_history(f"history:{user_id}", {"role": "assistant", "content": answer}, limit)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("cannot store dialogue history")
 
     @staticmethod
