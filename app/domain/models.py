@@ -9,22 +9,6 @@ def _attach_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
-class UserRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    platform: Platform
-    external_id: str
-    username: str | None = None
-    timezone: str
-    created_at: datetime
-
-    @field_validator("created_at")
-    @classmethod
-    def _utc_created_at(cls, value: datetime) -> datetime:
-        return _attach_utc(value)
-
-
 class EventCreate(BaseModel):
     type: EventType
     title: str = Field(min_length=1, max_length=255)
@@ -78,13 +62,6 @@ class EventRead(BaseModel):
             if value is not None and value.tzinfo is None:
                 setattr(self, field, _attach_utc(value))
         return self
-
-
-class AssistantRequest(BaseModel):
-    platform: Platform = Platform.WEB
-    external_user_id: str = Field(min_length=1, max_length=128)
-    text: str = Field(min_length=1, max_length=4000)
-    wants_voice: bool = False
 
 
 class AssistantResponse(BaseModel):

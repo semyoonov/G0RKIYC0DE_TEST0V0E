@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthSession, ChatReply, MiniApps } from "../types";
-import { ApiError, NETWORK_ERROR_TEXT, postChat } from "./api";
+import { NETWORK_ERROR_TEXT, postChat } from "./api";
 import * as session from "./session";
 
 const launchState = vi.hoisted(() => ({
@@ -17,10 +17,10 @@ vi.mock("./platform", async (importOriginal) => {
 });
 
 const MINI_APPS: MiniApps = {
-  telegram: "https://t.me/assistant_bot?startapp=CODE",
+  telegram: "https://t.me/assistant_bot",
   vk: null,
   max: null,
-  web: "https://example.test/?start=CODE",
+  web: "https://example.test/",
 };
 
 function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
@@ -41,9 +41,9 @@ function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
         display_name: null,
       },
     ],
-    start_param: null,
-    link_redeemed: false,
     mini_apps: MINI_APPS,
+    email: null,
+    has_password: false,
     ...overrides,
   };
 }
@@ -84,14 +84,17 @@ afterEach(() => {
 });
 
 describe("bootstrapSession", () => {
-  it("does not create an anonymous web session", async () => {
+  it("opens a guest session instead of asking for a login", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(makeSession({ token: "guest-token" })));
 
     await session.bootstrapSession();
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem("assistant_session_token")).toBeNull();
-    expect(session.getToken()).toBeNull();
-    expect(session.getSessionSnapshot().status).toBe("unauthenticated");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestAt(0).path).toBe("/api/auth/guest");
+    expect(requestAt(0).init?.method).toBe("POST");
+    expect(window.localStorage.getItem("assistant_session_token")).toBe("guest-token");
+    expect(session.getSessionSnapshot().status).toBe("ready");
+    expect(session.getSessionSnapshot().session?.email).toBeNull();
   });
 
   it("reuses a stored token through /api/auth/me", async () => {
@@ -134,19 +137,19 @@ describe("bootstrapSession", () => {
     expect(session.getSessionSnapshot().session?.identity.platform).toBe("vk");
   });
 
-  it("requires email verification when an old anonymous web token is rejected", async () => {
+  it("replaces an expired token with a guest session", async () => {
     window.localStorage.setItem("assistant_session_token", "legacy-token");
-    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Сессия истекла." }, 401));
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ detail: "Сессия истекла." }, 401))
+      .mockResolvedValueOnce(jsonResponse(makeSession({ token: "guest-token" })));
 
     await session.bootstrapSession();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(requestAt(0).path).toBe("/api/auth/me");
-    // Keep the signed token only so /email/request and /email/verify can migrate
-    // the old browser account and retain its events.
-    expect(window.localStorage.getItem("assistant_session_token")).toBe("legacy-token");
-    expect(session.getSessionSnapshot().status).toBe("unauthenticated");
-    expect(session.getSessionSnapshot().session).toBeNull();
+    expect(requestAt(1).path).toBe("/api/auth/guest");
+    expect(window.localStorage.getItem("assistant_session_token")).toBe("guest-token");
+    expect(session.getSessionSnapshot().status).toBe("ready");
   });
 
   it("does not fall back to anonymous web login when mini-app auth fails", async () => {
@@ -176,7 +179,8 @@ describe("bootstrapSession", () => {
     expect(snapshot.status).toBe("error");
     expect(snapshot.error).toBe(NETWORK_ERROR_TEXT);
     expect(snapshot.session).toBeNull();
-    expect(session.getToken()).toBeNull();
+    // The token stays: the next load retries it instead of starting over.
+    expect(session.getToken()).toBe("stored-token");
   });
 });
 
@@ -190,17 +194,21 @@ describe("account requests", () => {
     intent: null,
   };
 
-  it("does not retry an unauthorized chat request with an anonymous session", async () => {
+  it("retries an unauthorized chat request once with a guest session", async () => {
     window.localStorage.setItem("assistant_session_token", "legacy-token");
-    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Нет доступа." }, 401));
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ detail: "Нет доступа." }, 401))
+      .mockResolvedValueOnce(jsonResponse(makeSession({ token: "guest-token" })))
+      .mockResolvedValueOnce(jsonResponse(reply));
 
-    await expect(postChat("Привет")).rejects.toBeInstanceOf(ApiError);
+    await expect(postChat("Привет")).resolves.toEqual(reply);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(requestAt(0).path).toBe("/api/chat");
     expect(authorization(requestAt(0).init)).toBe("Bearer legacy-token");
-    expect(window.localStorage.getItem("assistant_session_token")).toBeNull();
-    expect(session.getSessionSnapshot().status).toBe("unauthenticated");
+    expect(requestAt(1).path).toBe("/api/auth/guest");
+    expect(authorization(requestAt(2).init)).toBe("Bearer guest-token");
+    expect(session.getSessionSnapshot().status).toBe("ready");
   });
 
   it("does not send client_id with an authenticated chat request", async () => {

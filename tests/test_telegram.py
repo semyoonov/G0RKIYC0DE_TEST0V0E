@@ -15,7 +15,7 @@ from app.domain.enums import EventStatus, EventType, Platform
 from app.domain.models import AssistantResponse, EventRead
 from app.interfaces.cards import DONE_BUTTON_LIMIT, cards_html
 from app.interfaces.telegram.bot import BOT_COMMANDS, create_dispatcher
-from app.interfaces.telegram.handlers import common, link, text, voice
+from app.interfaces.telegram.handlers import common, mini_app, text, voice
 from app.interfaces.telegram.keyboards import (
     HELP_BUTTON,
     QUICK_ACTIONS,
@@ -218,12 +218,12 @@ def test_dispatcher_includes_routers_in_order() -> None:
     assert isinstance(dispatcher, Dispatcher)
     assert [router.name for router in dispatcher.sub_routers] == [
         "telegram_common",
-        "telegram_link",
+        "telegram_app",
         "telegram_text",
         "telegram_voice",
     ]
-    assert dispatcher.sub_routers == [common.router, link.router, text.router, voice.router]
-    for router in (common.router, link.router, text.router, voice.router):
+    assert dispatcher.sub_routers == [common.router, mini_app.router, text.router, voice.router]
+    for router in (common.router, mini_app.router, text.router, voice.router):
         assert router.message.handlers
     assert text.router.callback_query.handlers
 
@@ -255,7 +255,6 @@ def test_bot_commands() -> None:
         "today",
         "tomorrow",
         "week",
-        "link",
         "app",
     ]
 
@@ -442,57 +441,11 @@ async def test_done_callback_reports_assistant_error(settings: Settings) -> None
     assert callback.answers == [{"text": text.ERROR_TEXT, "show_alert": True}]
 
 
-class FakeAuth:
-    def __init__(self, fail_code: str | None = None) -> None:
-        self.fail_code = fail_code
-        self.redeemed: list[tuple[Any, str]] = []
-
-    async def redeem(self, identity: Any, code: str) -> Any:
-        self.redeemed.append((identity, code))
-        if code == self.fail_code:
-            from app.services.auth.service import LinkCodeError
-            raise LinkCodeError("код не найден")
-        return SimpleNamespace(user_id=1)
-
-
-async def test_handle_start_redeems_code(settings: Settings) -> None:
-    from aiogram.filters import CommandObject
-    auth = FakeAuth()
+async def test_handle_start_greets_with_the_keyboard(settings: Settings) -> None:
     message = FakeMessage(user_id=42)
-    command = CommandObject(prefix="/", command="start", args="ABC123")
 
-    await common.handle_start(message, command=command, auth=auth, settings=settings)
-
-    assert len(auth.redeemed) == 1
-    identity, code = auth.redeemed[0]
-    assert identity.platform is Platform.TELEGRAM
-    assert identity.external_id == "42"
-    assert code == "ABC123"
-    assert len(message.answers) == 1
-    assert "успешно привязан" in message.answers[0]["text"]
-
-
-async def test_handle_start_handles_invalid_code(settings: Settings) -> None:
-    from aiogram.filters import CommandObject
-    auth = FakeAuth(fail_code="BADCODE")
-    message = FakeMessage(user_id=42)
-    command = CommandObject(prefix="/", command="start", args="BADCODE")
-
-    await common.handle_start(message, command=command, auth=auth, settings=settings)
+    await common.handle_start(message)
 
     assert len(message.answers) == 1
-    assert "Не удалось привязать" in message.answers[0]["text"]
-
-
-async def test_handle_link_redeems_code(settings: Settings) -> None:
-    from aiogram.filters import CommandObject
-    auth = FakeAuth()
-    message = FakeMessage(user_id=42)
-    command = CommandObject(prefix="/", command="link", args="XYZ999")
-
-    await link.handle_link(message, auth=auth, settings=settings, command=command)
-
-    assert len(auth.redeemed) == 1
-    assert auth.redeemed[0][1] == "XYZ999"
-    assert "успешно привязан" in message.answers[0]["text"]
-
+    assert "задачи, встречи и напоминания" in message.answers[0]["text"]
+    assert message.answers[0]["reply_markup"] is not None

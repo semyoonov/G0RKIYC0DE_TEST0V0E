@@ -20,7 +20,7 @@ from test_auth_launch import (
     telegram_init_data,
     vk_launch_params,
 )
-from test_auth_service import auth_settings
+from test_auth_service import PASSWORD, auth_settings
 
 FIXED_TIME = datetime(2025, 5, 20, 9, 30, tzinfo=timezone.utc)
 
@@ -64,38 +64,23 @@ class FakeAssistant:
         return [make_event(2)]
 
 
-class FakeEmailSender:
-    configured = True
-
-    def __init__(self) -> None:
-        self.sent: list[tuple[str, str]] = []
-
-    async def send_login_code(self, email: str, code: str) -> None:
-        self.sent.append((email, code))
-
-
 def build_app(session_factory, settings: Settings | None = None) -> tuple[Any, FakeAssistant]:
     assistant = FakeAssistant()
     active_settings = settings or auth_settings()
-    sender = FakeEmailSender()
-    auth = AuthService(session_factory, active_settings, email_sender=sender)
+    auth = AuthService(session_factory, active_settings)
     app = create_app(assistant, active_settings, auth=auth)
-    app.state.test_email_sender = sender
     return app, assistant
 
 
 async def create_web_session(app: Any, email: str) -> dict[str, Any]:
-    requested = await request(app, "POST", "/api/auth/email/request", json={"email": email})
-    assert requested.status_code == 200
-    code = app.state.test_email_sender.sent[-1][1]
-    verified = await request(
+    response = await request(
         app,
         "POST",
-        "/api/auth/email/verify",
-        json={"email": email, "code": code},
+        "/api/auth/register",
+        json={"email": email, "password": PASSWORD},
     )
-    assert verified.status_code == 200, verified.text
-    return verified.json()
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 async def request(app: Any, method: str, url: str, **kwargs: Any) -> httpx.Response:
@@ -189,48 +174,6 @@ async def test_unconfigured_platform_is_unavailable(session_factory) -> None:
     assert response.status_code == 503
 
 
-async def test_link_code_flow_over_http(session_factory) -> None:
-    app, _ = build_app(session_factory)
-    web = await create_web_session(app, "web-http@example.com")
-    headers = {"Authorization": f"Bearer {web['token']}"}
-
-    issued = (await request(app, "POST", "/api/auth/code", headers=headers)).json()
-    assert len(issued["code"]) == 6
-
-    linked = (
-        await request(
-            app,
-            "POST",
-            "/api/auth/link",
-            json={"code": issued["code"].lower()},
-            headers=headers,
-        )
-    ).json()
-    assert linked["link_redeemed"] is True
-    assert linked["identity"]["external_id"].startswith("email-")
-
-    me = (await request(app, "GET", "/api/auth/me", headers=headers)).json()
-    assert me["user"]["id"] == linked["user"]["id"]
-
-
-async def test_link_rejects_bad_code(session_factory) -> None:
-    app, _ = build_app(session_factory)
-    web = await create_web_session(app, "bad-link@example.com")
-    headers = {"Authorization": f"Bearer {web['token']}"}
-
-    response = await request(app, "POST", "/api/auth/link", json={"code": "AAAAAA"}, headers=headers)
-
-    assert response.status_code == 400
-
-
-async def test_anonymous_cannot_request_a_code(session_factory) -> None:
-    app, _ = build_app(session_factory)
-
-    response = await request(app, "POST", "/api/auth/code")
-
-    assert response.status_code == 401
-
-
 async def test_max_and_vk_sessions_over_http(session_factory) -> None:
     app, _ = build_app(session_factory)
 
@@ -264,41 +207,130 @@ async def test_meta_exposes_configured_platforms(session_factory, platform: str,
 
     assert platform in body["platforms"]
     assert token_name
-    assert f"https://vk.com/app{VK_APP_ID}" in body["mini_apps"].values()
+    assert body["mini_apps"]["vk"] == f"https://vk.com/app{VK_APP_ID}"
 
 
-async def test_demo_email_signs_in_without_letter_and_shares_one_profile(session_factory) -> None:
-    app, _ = build_app(session_factory)
-    sender = app.state.test_email_sender
+async def test_guest_endpoint_opens_a_working_account(session_factory) -> None:
+    app, assistant = build_app(session_factory)
 
-    first = await request(app, "POST", "/api/auth/email/request", json={"email": "test@test.com"})
-    second = await request(app, "POST", "/api/auth/email/request", json={"email": " TEST@test.com "})
+    guest = await request(app, "POST", "/api/auth/guest")
 
-    assert first.status_code == 200 and second.status_code == 200
-    assert sender.sent == []
-    one, two = first.json()["demo_session"], second.json()["demo_session"]
-    assert one["user"]["id"] == two["user"]["id"]
-    assert one["identity"]["external_id"].startswith("email-")
+    assert guest.status_code == 200
+    payload = guest.json()
+    assert payload["email"] is None
+    assert payload["has_password"] is False
 
-    me = await request(app, "GET", "/api/auth/me", headers={"Authorization": f"Bearer {one['token']}"})
-    assert me.status_code == 200
-    assert me.json()["user"]["id"] == one["user"]["id"]
+    chat = await request(
+        app,
+        "POST",
+        "/api/chat",
+        json={"text": "Что у меня сегодня?"},
+        headers={"Authorization": f"Bearer {payload['token']}"},
+    )
 
-
-async def test_demo_login_can_be_disabled(session_factory) -> None:
-    app, _ = build_app(session_factory, auth_settings(demo_login_email=""))
-
-    response = await request(app, "POST", "/api/auth/email/request", json={"email": "test@test.com"})
-
-    assert "demo_session" not in response.json()
-    assert len(app.state.test_email_sender.sent) == 1
+    assert chat.status_code == 200
+    assert assistant.text_calls[0][0] is Platform.WEB
 
 
-async def test_regular_email_still_gets_a_code(session_factory) -> None:
+async def test_register_then_login_opens_the_same_account(session_factory) -> None:
     app, _ = build_app(session_factory)
 
-    response = await request(app, "POST", "/api/auth/email/request", json={"email": "user@example.com"})
+    registered = await create_web_session(app, "account@example.com")
+    logged = await request(
+        app,
+        "POST",
+        "/api/auth/login",
+        json={"email": "account@example.com", "password": PASSWORD},
+    )
 
-    assert response.status_code == 200
-    assert "demo_session" not in response.json()
-    assert app.state.test_email_sender.sent[-1][0] == "user@example.com"
+    assert registered["email"] == "account@example.com"
+    assert registered["has_password"] is True
+    assert logged.status_code == 200
+    assert logged.json()["user"]["id"] == registered["user"]["id"]
+
+
+async def test_register_rejects_a_registered_email(session_factory) -> None:
+    app, _ = build_app(session_factory)
+    await create_web_session(app, "taken@example.com")
+
+    response = await request(
+        app,
+        "POST",
+        "/api/auth/register",
+        json={"email": "taken@example.com", "password": PASSWORD},
+    )
+
+    assert response.status_code == 409
+
+
+async def test_login_rejects_a_wrong_password(session_factory) -> None:
+    app, _ = build_app(session_factory)
+    await create_web_session(app, "strict@example.com")
+
+    response = await request(
+        app,
+        "POST",
+        "/api/auth/login",
+        json={"email": "strict@example.com", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+
+
+async def test_short_password_is_rejected(session_factory) -> None:
+    app, _ = build_app(session_factory)
+
+    response = await request(
+        app,
+        "POST",
+        "/api/auth/register",
+        json={"email": "short@example.com", "password": "short"},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_registering_from_a_guest_keeps_its_events(session_factory) -> None:
+    app, assistant = build_app(session_factory)
+    guest = (await request(app, "POST", "/api/auth/guest")).json()
+    headers = {"Authorization": f"Bearer {guest['token']}"}
+
+    registered = await request(
+        app,
+        "POST",
+        "/api/auth/register",
+        json={"email": "guest@example.com", "password": PASSWORD},
+        headers=headers,
+    )
+
+    assert registered.status_code == 200
+    assert registered.json()["user"]["id"] == guest["user"]["id"]
+    assert registered.json()["email"] == "guest@example.com"
+    assert assistant.text_calls == []
+
+
+async def test_login_from_a_mini_app_links_the_platform_identity(session_factory) -> None:
+    app, _ = build_app(session_factory)
+    registered = await create_web_session(app, "linked@example.com")
+    telegram = (
+        await request(
+            app,
+            "POST",
+            "/api/auth/session",
+            json={"platform": "telegram", "payload": telegram_init_data()},
+        )
+    ).json()
+
+    logged = await request(
+        app,
+        "POST",
+        "/api/auth/login",
+        json={"email": "linked@example.com", "password": PASSWORD},
+        headers={"Authorization": f"Bearer {telegram['token']}"},
+    )
+
+    assert logged.status_code == 200
+    payload = logged.json()
+    assert payload["user"]["id"] == registered["user"]["id"]
+    assert payload["identity"]["platform"] == "telegram"
+    assert {"web", "telegram"} <= {item["platform"] for item in payload["linked"]}

@@ -1,4 +1,7 @@
+from collections.abc import Awaitable, Callable
+
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.account_link import AccountLink
 from app.db.models.user import User
@@ -6,8 +9,15 @@ from app.domain.enums import Platform
 from app.repositories.base import BaseRepository
 
 
+CreatedHook = Callable[[AsyncSession, User], Awaitable[None]]
+
+
 class UserRepository(BaseRepository[User]):
     model = User
+
+    def __init__(self, session: AsyncSession, *, on_created: CreatedHook | None = None) -> None:
+        super().__init__(session)
+        self._on_created = on_created
 
     async def get_by_external_id(self, platform: Platform, external_id: str) -> User | None:
         statement = select(User).where(User.platform == platform, User.external_id == external_id)
@@ -45,7 +55,13 @@ class UserRepository(BaseRepository[User]):
                 username=username,
                 timezone=timezone or "Europe/Moscow",
             )
-            return await self.add(user)
+            self.session.add(user)
+            await self.session.flush()
+            if self._on_created is not None:
+                await self._on_created(self.session, user)
+            await self.session.commit()
+            await self.session.refresh(user)
+            return user
 
         changed = False
         if username and user.username != username:

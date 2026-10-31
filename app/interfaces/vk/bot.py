@@ -12,7 +12,6 @@ from app.interfaces.vk.handlers import handle_callback_payload, handle_message
 if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
     from app.core.config import Settings
-    from app.services.auth.service import AuthService
 
 log = get_logger(__name__)
 
@@ -27,11 +26,9 @@ class VkBot:
         self,
         assistant: AssistantService,
         settings: Settings,
-        auth: AuthService | None = None,
     ) -> None:
         self._assistant = assistant
         self._settings = settings
-        self._auth = auth
         self._bot: Bot | None = None
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
@@ -92,7 +89,7 @@ class VkBot:
 
         @labeler.message()
         async def _on_message(message: Message) -> None:
-            await handle_message(message, bot.api, self._assistant, self._settings, self._auth)
+            await handle_message(message, bot.api, self._assistant, self._settings)
 
         @labeler.raw_event(GroupEventType.MESSAGE_EVENT)
         async def _on_message_event(event: dict[str, Any]) -> None:

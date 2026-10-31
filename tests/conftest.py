@@ -19,6 +19,7 @@ def settings() -> Settings:
         telegram_bot_token="",
         max_bot_token="",
         timezone="Europe/Moscow",
+        demo_seed_enabled=False,
     )
 
 

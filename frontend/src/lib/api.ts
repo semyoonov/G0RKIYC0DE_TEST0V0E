@@ -2,7 +2,6 @@ import type {
   AssistantEvent,
   AuthSession,
   ChatReply,
-  LinkCodeResponse,
   Meta,
   SessionPlatform,
 } from "../types";
@@ -131,37 +130,23 @@ export async function fetchMe(token: string): Promise<AuthSession> {
   );
 }
 
-export interface EmailRequestResponse {
-  message: string;
-  /** Present only for the demo address: the visitor is signed in without a letter. */
-  demo_session?: AuthSession;
+export async function openGuestSession(): Promise<AuthSession> {
+  return readJson<AuthSession>(await fetch("/api/auth/guest", { method: "POST" }));
 }
 
-export async function requestEmailCode(email: string): Promise<EmailRequestResponse> {
-  return requestWithToken<EmailRequestResponse>("/api/auth/email/request", {
+export async function registerAccount(email: string, password: string): Promise<AuthSession> {
+  return requestWithToken<AuthSession>("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, password }),
   });
 }
 
-export async function verifyEmailCode(email: string, code: string): Promise<AuthSession> {
-  return requestWithToken<AuthSession>("/api/auth/email/verify", {
+export async function loginAccount(email: string, password: string): Promise<AuthSession> {
+  return requestWithToken<AuthSession>("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, code }),
-  });
-}
-
-export async function requestAuthCode(): Promise<LinkCodeResponse> {
-  return requestWithToken<LinkCodeResponse>("/api/auth/code", { method: "POST" });
-}
-
-export async function linkIdentity(code: string): Promise<AuthSession> {
-  return requestWithToken<AuthSession>("/api/auth/link", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ email, password }),
   });
 }
 

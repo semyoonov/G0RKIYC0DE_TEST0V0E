@@ -3,13 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as session from "../lib/session";
-import { LinkPanel } from "./LinkPanel";
+import { AccountPanel } from "./AccountPanel";
 
 function renderInPage() {
   render(
     <div>
       <button type="button">Чат</button>
-      <LinkPanel />
+      <AccountPanel />
     </div>,
   );
   return screen.getByRole("button", { name: /Аккаунт и настройки/ });
@@ -26,7 +26,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("LinkPanel как всплывающее окно", () => {
+describe("AccountPanel как всплывающее окно", () => {
   it("закрывается кликом мимо окна", async () => {
     const user = userEvent.setup();
     const trigger = renderInPage();
@@ -44,7 +44,7 @@ describe("LinkPanel как всплывающее окно", () => {
     const trigger = renderInPage();
 
     await user.click(trigger);
-    await user.click(screen.getByLabelText("Код привязки"));
+    await user.click(screen.getByLabelText("Электронная почта"));
     await user.keyboard("{Escape}");
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -52,7 +52,7 @@ describe("LinkPanel как всплывающее окно", () => {
   });
 
   it("не закрывается от кликов и ввода внутри окна", async () => {
-    // С живой сессией поле кода доступно для ввода.
+    // С живой сессией поля формы доступны для ввода.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -62,9 +62,9 @@ describe("LinkPanel как всплывающее окно", () => {
             identity: { platform: "web", platform_title: "Веб", external_id: "c1", display_name: null },
             user: { id: 1 },
             linked: [],
-            start_param: null,
-            link_redeemed: false,
             mini_apps: { telegram: null, max: null, vk: null, web: null },
+            email: null,
+            has_password: false,
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
@@ -75,11 +75,11 @@ describe("LinkPanel как всплывающее окно", () => {
     const trigger = renderInPage();
 
     await user.click(trigger);
-    await user.click(screen.getByText("Привязанные аккаунты"));
-    await user.type(screen.getByLabelText("Код привязки"), "AB12");
+    await user.click(screen.getByText("Аккаунт"));
+    await user.type(screen.getByLabelText("Электронная почта"), "me@example.com");
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByLabelText("Код привязки")).toHaveValue("AB12");
+    expect(screen.getByLabelText("Электронная почта")).toHaveValue("me@example.com");
   });
 
   it("повторный клик по шестерёнке закрывает окно, а не открывает его заново", async () => {

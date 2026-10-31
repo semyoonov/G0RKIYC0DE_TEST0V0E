@@ -1,4 +1,3 @@
-import base64
 import time
 import uuid
 from dataclasses import dataclass
@@ -79,7 +78,3 @@ def _parse_expiry(raw: object, now: float) -> float:
         return value / 1000
     return value
 
-
-def credentials_header(client_id: str, client_secret: str) -> str:
-    """Build the Basic credential string Sber expects from a client id/secret pair."""
-    return base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()

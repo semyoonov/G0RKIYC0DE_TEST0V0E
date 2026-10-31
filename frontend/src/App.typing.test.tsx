@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import { bootstrapSession } from "./lib/session";
 
 const ANSWER = "Создал задачу «Купить билеты».";
 
@@ -11,6 +12,18 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function guestSession() {
+  return {
+    token: "app-token",
+    identity: { platform: "web", platform_title: "Веб", external_id: "guest-1", display_name: null },
+    user: { id: 1 },
+    linked: [],
+    mini_apps: { telegram: null, max: null, vk: null, web: "https://example.test/" },
+    email: null,
+    has_password: false,
+  };
 }
 
 let replyChat: (response: Response) => void = () => {};
@@ -22,6 +35,9 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
+      if (String(input) === "/api/auth/guest" || String(input) === "/api/auth/me") {
+        return Promise.resolve(json(guestSession()));
+      }
       if (String(input) === "/api/chat") {
         return new Promise<Response>((resolve) => {
           replyChat = resolve;
@@ -32,6 +48,10 @@ beforeEach(() => {
   );
 });
 
+beforeEach(async () => {
+  await bootstrapSession();
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -39,6 +59,8 @@ afterEach(() => {
 
 async function send(text: string) {
   const user = userEvent.setup();
+  // Приложение сначала открывает гостевую сессию, и только потом поле готово.
+  await waitFor(() => expect(screen.getByLabelText("Сообщение")).toBeEnabled());
   await user.type(screen.getByLabelText("Сообщение"), text);
   await user.click(screen.getByRole("button", { name: "Отправить" }));
 }

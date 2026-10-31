@@ -3,21 +3,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aiogram import F, Router
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command
 from aiogram.types import Message
 
 from app.core.exceptions import AssistantError
 from app.core.logger import get_logger
 from app.domain.enums import Platform
-from app.interfaces.linking import display_name_of, identity_for
-from app.interfaces.email_linking import confirm_email_link, request_email_link
 from app.interfaces.telegram.handlers.text import ERROR_TEXT
 from app.interfaces.telegram.keyboards import (
     HELP_BUTTON,
     QUICK_TODAY,
     main_keyboard,
 )
-from app.services.auth.service import AuthService, LinkCodeError
 
 if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
@@ -42,8 +39,7 @@ HELP_TEXT = (
     "— планы на период: «Что у меня на этой неделе?»\n"
     "— старые события: «Какие встречи были в прошлом месяце?»\n\n"
     "Можно писать текстом или отправлять голосовые — я распознаю речь и отвечу текстом.\n"
-    "/email адрес@example.com — запросить код привязки по email.\n"
-    "/emailcode адрес@example.com 123456 — подтвердить код и связать аккаунт."
+    "/app — приложение: календарь и вход по почте и паролю на других устройствах."
 )
 
 UNKNOWN_COMMAND_TEXT = "Не знаю такую команду. Откройте /help, чтобы увидеть, что я умею."
@@ -74,90 +70,8 @@ async def _reply_period(
 
 
 @router.message(Command("start"))
-async def handle_start(
-    message: Message,
-    command: CommandObject | None = None,
-    auth: AuthService | None = None,
-    settings: Settings | None = None,
-) -> None:
-    if message.from_user is None:
-        return
-    code = (command.args or "").strip() if command else ""
-    if code and auth is not None:
-        user = message.from_user
-        first_name = getattr(user, "first_name", None)
-        last_name = getattr(user, "last_name", None)
-        username = getattr(user, "username", None)
-        identity = identity_for(
-            Platform.TELEGRAM,
-            user.id,
-            display_name_of(first_name, last_name) or (f"@{username}" if username else None),
-        )
-        try:
-            await auth.redeem(identity, code)
-            logger.info("telegram: redeemed link code %s for user %s via /start", code, user.id)
-            await message.answer(
-                "✅ Аккаунт успешно привязан!\n"
-                "Теперь ваши задачи, встречи и напоминания синхронизированы между Telegram и веб-версией.\n\n"
-                f"{START_TEXT}",
-                reply_markup=main_keyboard(),
-            )
-            return
-        except LinkCodeError as exc:
-            await message.answer(
-                f"❌ Не удалось привязать аккаунт: {exc}.\n\n"
-                "Получите новый код в веб-приложении или используйте /link для создания кода.",
-                reply_markup=main_keyboard(),
-            )
-            return
-        except Exception:
-            logger.exception("telegram: link redeem failed for user %s", user.id)
-            await message.answer(
-                "❌ Не удалось привязать аккаунт, попробуйте ещё раз.",
-                reply_markup=main_keyboard(),
-            )
-            return
-
+async def handle_start(message: Message) -> None:
     await message.answer(START_TEXT, reply_markup=main_keyboard())
-
-
-@router.message(Command("email"))
-async def handle_email_link_request(
-    message: Message,
-    command: CommandObject | None = None,
-    auth: AuthService | None = None,
-) -> None:
-    if message.from_user is None:
-        return
-    email = (command.args or "").strip() if command else ""
-    if not email or auth is None:
-        await message.answer("Использование: /email ваш-адрес@example.com")
-        return
-    user = message.from_user
-    name = display_name_of(getattr(user, "first_name", None), getattr(user, "last_name", None))
-    username = getattr(user, "username", None)
-    identity = identity_for(Platform.TELEGRAM, user.id, name or (f"@{username}" if username else None))
-    await message.answer(await request_email_link(auth, identity, email))
-
-
-@router.message(Command("emailcode"))
-async def handle_email_link_confirm(
-    message: Message,
-    command: CommandObject | None = None,
-    auth: AuthService | None = None,
-) -> None:
-    if message.from_user is None:
-        return
-    parts = (command.args or "").split() if command else []
-    if len(parts) != 2 or auth is None:
-        await message.answer("Использование: /emailcode ваш-адрес@example.com 123456")
-        return
-    email, code = parts
-    user = message.from_user
-    name = display_name_of(getattr(user, "first_name", None), getattr(user, "last_name", None))
-    username = getattr(user, "username", None)
-    identity = identity_for(Platform.TELEGRAM, user.id, name or (f"@{username}" if username else None))
-    await message.answer(await confirm_email_link(auth, identity, email, code), reply_markup=main_keyboard())
 
 
 @router.message(Command("help"))

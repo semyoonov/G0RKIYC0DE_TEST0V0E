@@ -7,7 +7,7 @@ from app.domain.identity import Identity
 from app.domain.models import AssistantResponse
 from app.interfaces.web import routes as routes_module
 from app.interfaces.web.app import create_app
-from app.services.auth.tokens import SessionTokens
+
 
 
 class FakeAssistant:

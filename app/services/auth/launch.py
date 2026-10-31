@@ -30,7 +30,6 @@ class LaunchContext:
     """What a validated mini-app launch tells us about the visitor."""
 
     identity: Identity
-    start_param: str | None = None
     language: str | None = None
 
 
@@ -89,29 +88,6 @@ def _display_name(user: dict[str, Any]) -> str | None:
     return None
 
 
-def _start_param(params: dict[str, str]) -> str | None:
-    for key in (
-        "start_param",
-        "startParam",
-        "startapp",
-        "start_app",
-        "vk_app_hash",
-        "link",
-        "code",
-        "ref",
-    ):
-        value = params.get(key)
-        if isinstance(value, str) and value.strip():
-            cleaned = value.strip().lstrip("#?")
-            if "=" in cleaned:
-                for part in cleaned.split("&"):
-                    k, _, v = part.partition("=")
-                    if k in ("link", "code", "startapp", "start_param", "start", "ref") and v.strip():
-                        return v.strip()
-            return cleaned
-    return None
-
-
 def _language(params: dict[str, str], user: dict[str, Any]) -> str | None:
     candidates = (user.get("language_code"), params.get("language_code"), params.get("vk_language"))
     for value in candidates:
@@ -158,7 +134,6 @@ def telegram_identity(
         raise LaunchError("telegram user is missing")
     return LaunchContext(
         identity=Identity(Platform.TELEGRAM, str(user["id"]), _display_name(user)),
-        start_param=_start_param(params),
         language=_language(params, user),
     )
 
@@ -193,7 +168,6 @@ def max_identity(
         raise LaunchError("max user is missing")
     return LaunchContext(
         identity=Identity(Platform.MAX, str(user_id), _display_name(user)),
-        start_param=_start_param(params),
         language=_language(params, user),
     )
 
@@ -243,6 +217,5 @@ def vk_identity(
         raise LaunchError("vk user is missing")
     return LaunchContext(
         identity=Identity(Platform.VK, user_id, None),
-        start_param=_start_param(params),
         language=params.get("vk_language"),
     )

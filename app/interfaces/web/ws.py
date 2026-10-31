@@ -69,7 +69,7 @@ def build_voice_stream_router(
         except (SessionTokenError, ValueError):
             await websocket.close(code=CLOSE_POLICY)
             return
-        client_id = account.identity.external_id
+        external_id = account.identity.external_id
 
         if active_streams >= limit:
             await websocket.close(code=CLOSE_DISABLED)
@@ -95,11 +95,11 @@ def build_voice_stream_router(
             else:
                 await websocket.send_json({"type": "error", "message": "речь не распознана"})
         except WebSocketDisconnect:
-            log.info("voice stream disconnected: client=%s", client_id)
+            log.info("voice stream disconnected: user=%s", external_id)
         except TranscriptionError as error:
             await _send_error(websocket, str(error))
         except Exception:  # noqa: BLE001 - the socket must be closed with a message, not a traceback
-            log.exception("voice stream failed: client=%s", client_id)
+            log.exception("voice stream failed: user=%s", external_id)
             await _send_error(websocket, "не удалось обработать аудио")
         finally:
             if session is not None:

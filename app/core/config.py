@@ -86,19 +86,10 @@ class Settings(BaseSettings):
     mini_app_public_url: str = ""
     session_secret: str = "dev-insecure-session-secret"
     session_ttl_seconds: int = 2592000
-    link_code_ttl_seconds: int = 900
 
-    # Email OTP authentication (Resend API). Keep the secrets only in .env.
-    resend_api_key: str = ""
-    email_from: str = ""
-    email_code_secret: str = ""
-    email_code_ttl_seconds: int = 600
-    email_code_max_attempts: int = 5
-    email_code_cooldown_seconds: int = 60
-    # Demo login: this address signs in without a letter and shares one test profile.
-    # Leave empty to disable (recommended for real production data).
-    demo_login_email: str = "test@test.com"
     ws_max_concurrent_streams: int = 4
+    # Новый аккаунт получает примеры задач и встреч: демонстрация без пустого календаря.
+    demo_seed_enabled: bool = True
 
     enable_scheduler: bool = True
     reminder_poll_seconds: int = 30
@@ -177,29 +168,26 @@ class Settings(BaseSettings):
     def mini_app_base_url(self) -> str:
         return (self.mini_app_public_url or self.web_public_url).rstrip("/")
 
-    def mini_app_link(self, platform: Platform, code: str | None = None) -> str | None:
-        """Public URL that opens the assistant on one platform, optionally carrying a link code."""
+    def mini_app_link(self, platform: Platform) -> str | None:
+        """Public URL that opens the assistant on one platform."""
         if platform is Platform.TELEGRAM:
             username = self.telegram_bot_username.strip().lstrip("@")
             if not username:
                 return None
-            start = f"?start={code}" if code else ""
-            return f"https://t.me/{username}{start}"
+            return f"https://t.me/{username}"
         if platform is Platform.MAX:
             username = self.max_bot_username.strip().lstrip("@")
-            startapp = f"?startapp={code}&start={code}" if code else ""
-            return f"https://max.ru/{username}{startapp}" if username else None
+            return f"https://max.ru/{username}" if username else None
         if platform is Platform.VK:
             if not self.vk_mini_app_id:
                 return None
-            start = f"#startapp={code}" if code else ""
-            return f"https://vk.com/app{self.vk_mini_app_id}{start}"
+            return f"https://vk.com/app{self.vk_mini_app_id}"
         if platform is Platform.WEB:
-            return f"{self.mini_app_base_url}/?link={code}" if code else f"{self.mini_app_base_url}/"
+            return f"{self.mini_app_base_url}/"
         return None
 
-    def mini_app_links(self, code: str | None = None) -> dict[str, str | None]:
-        return {platform.value: self.mini_app_link(platform, code) for platform in Platform}
+    def mini_app_links(self) -> dict[str, str | None]:
+        return {platform.value: self.mini_app_link(platform) for platform in Platform}
 
 
 @lru_cache

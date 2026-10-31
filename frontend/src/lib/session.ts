@@ -1,23 +1,22 @@
 import { useSyncExternalStore } from "react";
 
-import type { AuthSession, LinkCodeResponse } from "../types";
+import type { AuthSession } from "../types";
 import {
   ApiError,
   clearSessionToken,
   errorMessage,
   fetchMe,
-  linkIdentity,
+  loginAccount,
+  openGuestSession,
   openSession,
   readSessionToken,
-  requestAuthCode,
-  requestEmailCode as requestEmailCodeApi,
+  registerAccount,
   setSessionRecovery,
-  verifyEmailCode as verifyEmailCodeApi,
   writeSessionToken,
 } from "./api";
-import { detectLaunch, readLinkParam, type Platform } from "./platform";
+import { detectLaunch, type Platform } from "./platform";
 
-export type SessionStatus = "idle" | "loading" | "ready" | "unauthenticated" | "error";
+export type SessionStatus = "loading" | "ready" | "error";
 
 export interface SessionFallback {
   platform: Platform;
@@ -29,15 +28,13 @@ export interface SessionState {
   session: AuthSession | null;
   fallback: SessionFallback | null;
   error: string | null;
-  linkRedeemed: boolean;
 }
 
 const INITIAL_STATE: SessionState = {
-  status: "idle",
+  status: "loading",
   session: null,
   fallback: null,
   error: null,
-  linkRedeemed: false,
 };
 
 let state: SessionState = INITIAL_STATE;
@@ -61,7 +58,6 @@ function applySession(session: AuthSession, fallback: SessionFallback | null = n
     session,
     fallback,
     error: null,
-    linkRedeemed: session.link_redeemed,
   });
   return session;
 }
@@ -70,36 +66,25 @@ function fail(error: unknown, fallback: SessionFallback | null = state.fallback)
   patch({ status: "error", error: errorMessage(error), fallback });
 }
 
-async function loginFresh(): Promise<AuthSession | null> {
-  const launch = detectLaunch();
-  if (launch.platform === "web") {
-    patch({ status: "unauthenticated", session: null, error: null });
-    return null;
-  }
+async function openPlatformSession(platform: Platform, payload: string): Promise<AuthSession> {
   // A mini-app must prove its own platform identity; do not silently retain a
   // token from a different client if the launch validation fails.
   clearSessionToken();
   patch({ status: "loading", error: null });
   try {
-    const session = await openSession(launch.platform, launch.payload);
+    const session = await openSession(platform, payload);
     applySession(session);
-    await maybeRedeemLinkCode();
-    return state.session;
+    return state.session as AuthSession;
   } catch (error) {
-    fail(error, { platform: launch.platform, reason: errorMessage(error) });
-    return null;
+    fail(error, { platform, reason: errorMessage(error) });
+    throw error;
   }
 }
 
-async function maybeRedeemLinkCode(): Promise<void> {
-  const code = readLinkParam();
-  if (!code || !readSessionToken()) return;
-  try {
-    const updated = await linkWithCode(code);
-    applySession(updated);
-  } catch {
-    // A link code may be expired or unrelated; normal email login still succeeds.
-  }
+async function startGuest(): Promise<AuthSession> {
+  const session = await openGuestSession();
+  applySession(session);
+  return state.session as AuthSession;
 }
 
 async function runBootstrap(): Promise<void> {
@@ -108,34 +93,25 @@ async function runBootstrap(): Promise<void> {
     const launch = detectLaunch();
     // In a mini app, signed platform launch data identifies the user.
     if (launch.platform !== "web" && launch.payload) {
-      await loginFresh();
+      await openPlatformSession(launch.platform, launch.payload);
       return;
     }
 
     const stored = readSessionToken();
     if (stored) {
       try {
-        const current = await fetchMe(stored);
-        applySession(current);
-        await maybeRedeemLinkCode();
+        applySession(await fetchMe(stored));
         return;
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 401) {
           fail(error);
           return;
         }
-        // Keep a signed legacy web token for one purpose only: the user can
-        // verify an email and preserve their old anonymous tasks. Protected API
-        // routes reject it until the email verification succeeds.
-        if (launch.platform !== "web") clearSessionToken();
+        clearSessionToken();
       }
     }
 
-    if (launch.platform === "web") {
-      patch({ status: "unauthenticated", session: null, fallback: null, error: null });
-      return;
-    }
-    fail(new Error("Откройте мини-приложение из своего мессенджера."));
+    await startGuest();
   } catch (error) {
     fail(error);
   }
@@ -153,8 +129,12 @@ async function recoverSession(): Promise<string | null> {
   if (bootstrapPromise) await bootstrapPromise;
   const existing = readSessionToken();
   if (existing) return existing;
-  patch({ status: "unauthenticated", session: null, fallback: null, error: null });
-  return null;
+  try {
+    const session = await startGuest();
+    return session.token;
+  } catch {
+    return null;
+  }
 }
 
 function recoverSessionOnce(): Promise<string | null> {
@@ -182,40 +162,23 @@ export function getToken(): string | null {
   return readSessionToken();
 }
 
-/** Resolves to true when the demo address signed the visitor in and no code is needed. */
-export async function requestEmailCode(email: string): Promise<boolean> {
-  const response = await requestEmailCodeApi(email.trim());
-  if (response?.demo_session) {
-    applySession(response.demo_session);
-    await maybeRedeemLinkCode();
-    return true;
-  }
-  return false;
+/** Registers the current account, keeping its tasks and linked platforms. */
+export async function registerWithPassword(email: string, password: string): Promise<AuthSession> {
+  applySession(await registerAccount(email.trim(), password));
+  return state.session as AuthSession;
 }
 
-export async function loginWithEmail(email: string, code: string): Promise<AuthSession> {
-  const session = await verifyEmailCodeApi(email.trim(), code.trim());
-  applySession(session);
-  await maybeRedeemLinkCode();
-  return session;
+/** Signs in to an existing account and links the current platform to it. */
+export async function loginWithPassword(email: string, password: string): Promise<AuthSession> {
+  applySession(await loginAccount(email.trim(), password));
+  return state.session as AuthSession;
 }
 
-export async function requestLinkCode(): Promise<LinkCodeResponse> {
-  if (!readSessionToken()) {
-    throw new ApiError("Войдите в аккаунт, чтобы получить код.", 401);
-  }
-  return requestAuthCode();
-}
-
-export async function linkWithCode(code: string): Promise<AuthSession> {
-  const session = await linkIdentity(code.trim());
-  return applySession(session);
-}
-
-export function consumeLinkRedeemed(): boolean {
-  if (!state.linkRedeemed) return false;
-  patch({ linkRedeemed: false });
-  return true;
+/** Leaves the account behind and continues in a new guest session. */
+export async function leaveAccount(): Promise<void> {
+  clearSessionToken();
+  patch({ status: "loading", session: null, error: null, fallback: null });
+  await startGuest().catch((error: unknown) => fail(error));
 }
 
 export function resetSession(): void {

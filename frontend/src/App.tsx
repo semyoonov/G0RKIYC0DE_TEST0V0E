@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchMeta, reportTelemetry, warmupChat } from "./lib/api";
+import { AccountPanel } from "./components/AccountPanel";
 import { ChatMessage } from "./components/ChatMessage";
-import { AuthPanel } from "./components/AuthPanel";
+import { Button } from "./components/ui/button";
 import { Composer } from "./components/Composer";
-import { LinkPanel } from "./components/LinkPanel";
 import { LiveTranscript } from "./components/LiveTranscript";
 import { QuickActions } from "./components/QuickActions";
 import { ReplyModeSwitch } from "./components/ReplyModeSwitch";
@@ -15,9 +15,10 @@ import { useVoiceConversation } from "./hooks/useVoiceConversation";
 import { useVoiceStream } from "./hooks/useVoiceStream";
 import type { ConversationPhase } from "./lib/conversation";
 import { readSpeakReplies, readVoice, writeSpeakReplies, writeVoice } from "./lib/preferences";
-import { useSession } from "./lib/session";
-import { Calendar as CalendarIcon, MessageSquare } from "lucide-react";
+import { bootstrapSession, useSession } from "./lib/session";
+import { Calendar as CalendarIcon, GanttChartSquare, MessageSquare } from "lucide-react";
 import { CalendarView } from "./components/CalendarView";
+import { GanttView } from "./components/GanttView";
 
 const DEFAULT_QUICK_ACTIONS = ["Что у меня сегодня?", "Что на завтра?", "Что на этой неделе?"];
 // Зеркало CLOUD_TTS_VOICES из app/ai/tts/cloud_tts.py: виден сразу, /api/meta его заменяет.
@@ -40,13 +41,15 @@ function initialTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Moscow";
 }
 
+type ViewMode = "chat" | "calendar" | "gantt";
+
 export default function App() {
   const [timezone, setTimezone] = useState(initialTimezone);
   const [quickActions, setQuickActions] = useState<string[]>(DEFAULT_QUICK_ACTIONS);
   const [speakReplies, setSpeakReplies] = useState(readSpeakReplies);
   const [voices, setVoices] = useState<string[]>(DEFAULT_VOICES);
   const [voiceName, setVoiceName] = useState(readVoice);
-  const [viewMode, setViewMode] = useState<"chat" | "calendar">("chat");
+  const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const session = useSession();
   const chat = useChat();
   const voice = useVoiceStream();
@@ -161,6 +164,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void bootstrapSession();
+  }, []);
+
+  useEffect(() => {
     if (session.status === "ready") void warmupChat();
   }, [session.status]);
 
@@ -203,33 +210,27 @@ export default function App() {
         : awaitingReply
           ? ""
           : chat.status || conversation.hint;
-  const composerDisabled = chat.pending || voice.busy;
-
-  if (session.status === "idle" || session.status === "loading") {
-    return (
-      <div className="flex min-h-full items-center justify-center text-sm text-ink-muted" role="status">
-        Проверяем сессию…
-      </div>
-    );
-  }
-  if (session.status !== "ready") {
-    return <AuthPanel initialError={session.status === "error" ? session.error : null} />;
-  }
+  // Приложение открывается без входа: гостевая сессия выдаётся сама, а почта и
+  // пароль нужны только для доступа к тем же задачам с другого устройства.
+  const sessionReady = session.status === "ready";
+  const composerDisabled = chat.pending || voice.busy || !sessionReady;
 
   return (
-    <div className={`mx-auto flex h-full w-full transition-all duration-200 flex-col border-x border-line/60 ${viewMode === "calendar" ? "max-w-5xl" : "max-w-4xl"}`}>
-      <header className="flex flex-col gap-4 border-b border-line/70 px-4 py-4 sm:px-6">
+    <div className="flex h-full w-full flex-col">
+      <header className="flex flex-col gap-4 border-b border-line/70 px-4 py-4 sm:px-6 xl:px-8">
         {/* Мобилка: название + шестерёнка в строку, переключатели ниже. Планшет/ПК: всё в одну строку.
             Все элементы высотой 36px и прижаты к верху: подпись под переключателем свисает вниз,
             не сдвигая соседей. */}
         <div className="flex flex-wrap items-start gap-x-3 gap-y-3">
           <div className="order-1 flex h-9 min-w-0 flex-1 items-center">
             <div className="min-w-0">
-              <h1 className="text-base font-semibold leading-tight">Ассистент задач и встреч</h1>
+              <h1 className="hidden truncate text-base font-semibold leading-tight sm:block">
+                Ассистент задач и встреч
+              </h1>
             </div>
           </div>
 
-          {/* Переключатель режимов: Чат / Календарь */}
+          {/* Переключатель режимов: Чат / Календарь / Гант */}
           <div className="order-2 flex h-9 items-center sm:order-2">
             <div className="flex items-center rounded-xl border border-line bg-panel p-0.5">
               <button
@@ -258,11 +259,24 @@ export default function App() {
                 <CalendarIcon className="size-3.5" aria-hidden="true" />
                 <span>Календарь</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("gantt")}
+                className={`inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${
+                  viewMode === "gantt"
+                    ? "bg-accent text-white shadow-sm"
+                    : "text-ink-muted hover:text-ink"
+                }`}
+                title="Режим диаграммы Ганта"
+              >
+                <GanttChartSquare className="size-3.5" aria-hidden="true" />
+                <span>Гант</span>
+              </button>
             </div>
           </div>
 
           <div className="order-2 sm:order-3">
-            <LinkPanel />
+            <AccountPanel />
           </div>
 
           {viewMode === "chat" ? (
@@ -309,49 +323,63 @@ export default function App() {
           onSwitchToChat={() => setViewMode("chat")}
           onEventCompleted={chat.complete}
         />
+      ) : viewMode === "gantt" ? (
+        <GanttView
+          timezone={timezone}
+          onSwitchToChat={() => setViewMode("chat")}
+          onEventCompleted={chat.complete}
+        />
       ) : (
         <>
-          <main
-            ref={messagesRef}
-            className="flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6"
-            aria-live="polite"
-          >
-            <div className="max-w-[92%] rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm leading-relaxed text-ink-muted">
-              Здравствуйте! Напишите или скажите, что запланировать: задачу, встречу или напоминание.
-            </div>
-            {chat.entries.map((entry) => (
-              <ChatMessage
-                key={entry.id}
-                entry={entry}
-                timezone={timezone}
-                autoPlayAudio={speakReplies}
-                synthesizing={chat.synthesizingEntryId === entry.id}
-                onComplete={chat.complete}
-                onReplyAudioEnd={handleReplyAudioEnd}
-              />
-            ))}
-            {awaitingReply ? <TypingIndicator /> : null}
-            {voice.error ? (
-              <div className="max-w-[92%] rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-                {voice.error}
+          <main ref={messagesRef} className="flex-1 overflow-y-auto" aria-live="polite">
+            <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-5 sm:px-6">
+              <div className="max-w-[92%] rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm leading-relaxed text-ink-muted">
+                Здравствуйте! Напишите или скажите, что запланировать: задачу, встречу или напоминание.
               </div>
-            ) : null}
+              {session.status === "error" ? (
+                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+                  <span>{session.error}</span>
+                  <Button variant="outline" size="sm" onClick={() => void bootstrapSession()}>
+                    Повторить
+                  </Button>
+                </div>
+              ) : null}
+              {chat.entries.map((entry) => (
+                <ChatMessage
+                  key={entry.id}
+                  entry={entry}
+                  timezone={timezone}
+                  autoPlayAudio={speakReplies}
+                  synthesizing={chat.synthesizingEntryId === entry.id}
+                  onComplete={chat.complete}
+                  onReplyAudioEnd={handleReplyAudioEnd}
+                />
+              ))}
+              {awaitingReply ? <TypingIndicator /> : null}
+              {voice.error ? (
+                <div className="max-w-[92%] rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+                  {voice.error}
+                </div>
+              ) : null}
+            </div>
           </main>
 
           <footer className="border-t border-line/60">
-            <LiveTranscript text={voice.partial} />
-            <Composer
-              disabled={composerDisabled}
-              recording={voice.recording}
-              busy={voice.busy}
-              conversationActive={conversation.active}
-              conversationPhase={conversation.phase}
-              onSend={sendTyped}
-              onToggleRecording={() => void toggleRecording()}
-            />
-            <p className="min-h-5 px-4 pb-2 text-xs text-ink-dim sm:px-6" role="status">
-              {status || (awaitingReply ? null : "Нажмите «Голосом» и говорите — текст появляется на лету.")}
-            </p>
+            <div className="mx-auto w-full max-w-3xl">
+              <LiveTranscript text={voice.partial} />
+              <Composer
+                disabled={composerDisabled}
+                recording={voice.recording}
+                busy={voice.busy}
+                conversationActive={conversation.active}
+                conversationPhase={conversation.phase}
+                onSend={sendTyped}
+                onToggleRecording={() => void toggleRecording()}
+              />
+              <p className="min-h-5 px-4 pb-2 text-xs text-ink-dim sm:px-6" role="status">
+                {status || (awaitingReply ? null : "Нажмите «Голосом» и говорите — текст появляется на лету.")}
+              </p>
+            </div>
           </footer>
         </>
       )}

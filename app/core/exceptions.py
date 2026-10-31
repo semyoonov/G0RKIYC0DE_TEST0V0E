@@ -6,10 +6,6 @@ class ConfigurationError(AssistantError):
     """Required settings or local resources are missing."""
 
 
-class EventValidationError(AssistantError):
-    """User intent cannot be mapped to a valid event."""
-
-
 class NotFoundError(AssistantError):
     """Requested entity does not exist or belongs to another user."""
 
@@ -24,10 +20,6 @@ class SpeechSynthesisError(AssistantError):
 
 class LLMError(AssistantError):
     """Chat model call failed or returned an unusable answer."""
-
-
-class ToolExecutionError(AssistantError):
-    """A tool call from the model cannot be executed."""
 
 
 class ExternalServiceError(AssistantError):

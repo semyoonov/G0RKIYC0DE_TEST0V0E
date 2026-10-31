@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import time
-
 import pytest
 from sqlalchemy import select
 
 from app.core.config import Settings
+from app.core.timeutils import to_db, utcnow
+from app.db.models.user_email import UserEmail
 from app.db.models.event import Event
 from app.domain.enums import EventStatus, EventType, Platform
 from app.domain.identity import Identity
-from app.repositories.account_repository import AccountRepository, LinkCodeError
-from app.repositories.user_repository import UserRepository
-from app.services.auth.service import AuthService
+from app.services.auth.service import AuthService, CredentialsError, EmailAuthError
 from app.services.auth.tokens import SessionTokenError, SessionTokens
 from test_auth_launch import (
     MAX_TOKEN,
@@ -41,64 +39,155 @@ def auth_settings(**overrides: object) -> Settings:
         "max_bot_username": "helper_max",
         "session_secret": "test-session-secret",
         "session_ttl_seconds": 3600,
-        "link_code_ttl_seconds": 900,
         "web_public_url": "https://assistant.test",
         "timezone": "Europe/Moscow",
-        "email_code_secret": "test-email-secret",
+        "demo_seed_enabled": False,
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
 
 
-class FakeEmailSender:
-    configured = True
-
-    def __init__(self) -> None:
-        self.sent: list[tuple[str, str]] = []
-
-    async def send_login_code(self, email: str, code: str) -> None:
-        self.sent.append((email, code))
+PASSWORD = "correct-horse-9"
 
 
 @pytest.fixture
 def auth(session_factory) -> AuthService:
-    return AuthService(session_factory, auth_settings(), email_sender=FakeEmailSender())
+    return AuthService(session_factory, auth_settings())
 
 
 async def create_web_session(auth: AuthService, email: str):
-    await auth.request_email_code(email)
-    sender = auth._email_sender  # noqa: SLF001 - fake sender exposes the code for tests
-    code = sender.sent[-1][1]
-    return await auth.verify_email_code(email, code)
+    return await auth.register(email, PASSWORD)
 
 
-async def test_web_session_requires_email_verification(auth: AuthService) -> None:
+async def test_browser_sessions_start_as_guests_not_through_launch(auth: AuthService) -> None:
     from app.services.auth.launch import LaunchError
 
     with pytest.raises(LaunchError):
         await auth.open_session(Platform.WEB)
 
+    session = await auth.open_guest_session()
 
-async def test_web_email_code_creates_a_verified_session(auth: AuthService) -> None:
-    session = await create_web_session(auth, "Person@Example.com")
+    assert session.identity.platform is Platform.WEB
+    assert session.identity.external_id.startswith("guest-")
+    assert session.email is None
+    restored = await auth.account(session.token)
+    assert restored.user_id == session.user_id
+    assert restored.email is None
+
+
+async def test_registering_with_a_password_creates_a_web_login(auth: AuthService) -> None:
+    session = await auth.register("Person@Example.com", PASSWORD)
 
     assert session.identity.platform is Platform.WEB
     assert session.identity.external_id.startswith("email-")
+    assert session.email == "person@example.com"
+    assert session.has_password is True
     restored = await auth.account(session.token)
     assert restored.user_id == session.user_id
+    assert restored.email == "person@example.com"
 
 
-async def test_email_login_links_a_bot_account_and_preserves_its_id(auth: AuthService) -> None:
+async def test_registering_from_a_bot_keeps_the_bot_account(auth: AuthService) -> None:
     telegram = await auth.open_session(Platform.TELEGRAM, telegram_init_data())
     identity = Identity(Platform.TELEGRAM, "42")
-    await auth.request_email_code("same@example.com", identity)
-    sender = auth._email_sender  # noqa: SLF001 - fake sender exposes the code for tests
-    email_session = await auth.verify_email_code("same@example.com", sender.sent[-1][1], identity)
 
-    browser_session = await create_web_session(auth, "same@example.com")
+    registered = await auth.register("same@example.com", PASSWORD, identity)
+    browser = await auth.login("same@example.com", PASSWORD)
 
-    assert email_session.user_id == telegram.user_id
-    assert browser_session.user_id == telegram.user_id
+    assert registered.user_id == telegram.user_id
+    assert registered.identity.platform is Platform.TELEGRAM
+    assert browser.user_id == telegram.user_id
+
+
+async def test_registering_an_existing_email_is_rejected(auth: AuthService) -> None:
+    await auth.register("taken@example.com", PASSWORD)
+
+    with pytest.raises(EmailAuthError):
+        await auth.register("taken@example.com", PASSWORD)
+
+
+async def test_login_rejects_a_wrong_password(auth: AuthService) -> None:
+    await auth.register("wrong-pass@example.com", PASSWORD)
+
+    with pytest.raises(CredentialsError):
+        await auth.login("wrong-pass@example.com", "not-the-password")
+    with pytest.raises(CredentialsError):
+        await auth.login("unknown@example.com", PASSWORD)
+
+
+async def test_login_from_a_mini_app_links_its_platform_to_the_email_account(
+    auth: AuthService,
+    session_factory,
+) -> None:
+    browser = await auth.register("cross@example.com", PASSWORD)
+    telegram = await auth.open_session(Platform.TELEGRAM, telegram_init_data())
+    async with session_factory() as session:
+        session.add(
+            Event(
+                user_id=telegram.user_id,
+                type=EventType.TASK,
+                title="Задача из Telegram",
+                status=EventStatus.PENDING,
+                source=Platform.TELEGRAM,
+            )
+        )
+        await session.commit()
+
+    linked = await auth.login("cross@example.com", PASSWORD, Identity(Platform.TELEGRAM, "42"))
+
+    assert linked.user_id == browser.user_id
+    assert linked.identity.platform is Platform.TELEGRAM
+    assert {Platform.TELEGRAM, Platform.WEB} <= {identity.platform for identity in linked.linked}
+    async with session_factory() as session:
+        rows = (await session.execute(select(Event).where(Event.user_id == browser.user_id))).scalars()
+        assert [row.title for row in rows.all()] == ["Задача из Telegram"]
+
+
+async def test_a_leftover_email_can_be_claimed_only_by_its_own_account(
+    auth: AuthService,
+    session_factory,
+) -> None:
+    guest = await auth.open_guest_session()
+    async with session_factory() as session:
+        session.add(
+            UserEmail(
+                user_id=guest.user_id,
+                email_normalized="leftover@example.com",
+                web_identity_id="email-leftover",
+                claimed_at=to_db(utcnow()),
+            )
+        )
+        await session.commit()
+
+    with pytest.raises(EmailAuthError):
+        await auth.register("leftover@example.com", PASSWORD, Identity(Platform.TELEGRAM, "42"))
+
+    claimed = await auth.register("leftover@example.com", PASSWORD, guest.identity)
+    assert claimed.user_id == guest.user_id
+    assert claimed.has_password is True
+
+
+async def test_guest_registration_keeps_guest_events(auth: AuthService, session_factory) -> None:
+    guest = await auth.open_guest_session()
+    async with session_factory() as session:
+        session.add(
+            Event(
+                user_id=guest.user_id,
+                type=EventType.TASK,
+                title="Задача из гостевой сессии",
+                status=EventStatus.PENDING,
+                source=Platform.WEB,
+            )
+        )
+        await session.commit()
+
+    registered = await auth.register("guest-upgrade@example.com", PASSWORD, guest.identity)
+
+    assert registered.user_id == guest.user_id
+    assert registered.email == "guest-upgrade@example.com"
+    async with session_factory() as session:
+        rows = (await session.execute(select(Event).where(Event.user_id == guest.user_id))).scalars()
+        assert [row.title for row in rows.all()] == ["Задача из гостевой сессии"]
 
 
 async def test_telegram_session_uses_platform_identity(auth: AuthService) -> None:
@@ -150,108 +239,6 @@ async def test_vk_profile_lookup_without_a_token_skips_the_network() -> None:
     assert await fetch_display_name("", "555") is None
 
 
-async def test_start_param_links_web_account_to_telegram(auth: AuthService, session_factory) -> None:
-    web_session = await create_web_session(auth, "before-link@example.com")
-    async with session_factory() as session:
-        session.add(
-            Event(
-                user_id=web_session.user_id,
-                type=EventType.TASK,
-                title="Позвонить в банк",
-                status=EventStatus.PENDING,
-                source=Platform.WEB,
-            )
-        )
-        await session.commit()
-
-    issued = await auth.issue_link_code(web_session.identity)
-
-    telegram_session = await auth.open_session(
-        Platform.TELEGRAM,
-        telegram_init_data(start_param=issued["code"]),
-    )
-
-    assert telegram_session.link_redeemed is True
-    assert telegram_session.user_id == web_session.user_id
-    platforms = {identity.platform for identity in telegram_session.linked}
-    assert {Platform.WEB, Platform.TELEGRAM} <= platforms
-
-    restored = await auth.account(web_session.token)
-    assert restored.user_id == telegram_session.user_id
-
-    async with session_factory() as session:
-        rows = (await session.execute(select(Event).where(Event.user_id == telegram_session.user_id))).scalars()
-        assert [row.title for row in rows.all()] == ["Позвонить в банк"]
-
-
-async def test_redeem_moves_history_to_the_bot_account(auth: AuthService, session_factory) -> None:
-    telegram_session = await auth.open_session(Platform.TELEGRAM, telegram_init_data())
-    issued = await auth.issue_link_code(Identity(Platform.TELEGRAM, "42"))
-    web_session = await create_web_session(auth, "web-guest@example.com")
-    async with session_factory() as session:
-        session.add(
-            Event(
-                user_id=web_session.user_id,
-                type=EventType.REMINDER,
-                title="Купить билеты",
-                status=EventStatus.PENDING,
-                source=Platform.WEB,
-            )
-        )
-        await session.commit()
-
-    linked = await auth.redeem(web_session.identity, issued["code"])
-
-    assert linked.user_id == telegram_session.user_id
-    async with session_factory() as session:
-        rows = (await session.execute(select(Event).where(Event.user_id == telegram_session.user_id))).scalars()
-        assert [row.title for row in rows.all()] == ["Купить билеты"]
-        leftover = (await session.execute(select(Event).where(Event.user_id == web_session.user_id))).scalars()
-        assert leftover.all() == []
-
-
-async def test_linked_identity_resolves_through_the_user_repository(
-    auth: AuthService,
-    session_factory,
-) -> None:
-    owner = await auth.open_session(Platform.TELEGRAM, telegram_init_data())
-    issued = await auth.issue_link_code(Identity(Platform.TELEGRAM, "42"))
-    guest = await create_web_session(auth, "web-linked@example.com")
-    await auth.redeem(guest.identity, issued["code"])
-
-    async with session_factory() as session:
-        repository = UserRepository(session)
-        resolved = await repository.get_or_create(Platform.WEB, guest.identity.external_id)
-        stranger = await repository.get_or_create(Platform.WEB, "web-unlinked")
-
-    assert resolved.id == owner.user_id
-    assert resolved.id != guest.user_id
-    assert stranger.id != owner.user_id
-
-
-async def test_redeem_rejects_used_and_unknown_codes(auth: AuthService) -> None:
-    issued = await auth.issue_link_code(Identity(Platform.WEB, "web-once"))
-    await auth.redeem(Identity(Platform.TELEGRAM, "100"), issued["code"])
-
-    with pytest.raises(LinkCodeError):
-        await auth.redeem(Identity(Platform.TELEGRAM, "101"), issued["code"])
-    with pytest.raises(LinkCodeError):
-        await auth.redeem(Identity(Platform.TELEGRAM, "102"), "ZZZZZZ")
-
-
-async def test_redeem_rejects_expired_code(auth: AuthService) -> None:
-    issued = await auth.issue_link_code(Identity(Platform.WEB, "web-expired"))
-    async with auth._session_factory() as session:  # noqa: SLF001 - the fixture builds the repository directly
-        repository = AccountRepository(session)
-        row = await repository.find_code(issued["code"])
-        assert row is not None
-        row.expires_at = row.expires_at.replace(year=2000)
-        await session.commit()
-
-    with pytest.raises(LinkCodeError):
-        await auth.redeem(Identity(Platform.TELEGRAM, "103"), issued["code"])
-
-
 def test_session_tokens_reject_expired_and_forged() -> None:
     tokens = SessionTokens("secret", ttl_seconds=60)
     token = tokens.issue(Identity(Platform.TELEGRAM, "42"), now=1000)
@@ -277,77 +264,10 @@ async def test_open_session_rejects_bad_launch_data(auth: AuthService) -> None:
         await auth.open_session(Platform.TELEGRAM, "auth_date=1&hash=deadbeef")
 
 
-async def test_issue_code_reports_mini_app_links(auth: AuthService) -> None:
-    issued = await auth.issue_link_code(Identity(Platform.TELEGRAM, "42"))
+async def test_mini_app_links_open_the_app_without_a_code(auth: AuthService) -> None:
+    links = auth.settings.mini_app_links()
 
-    assert issued["mini_apps"]["telegram"].startswith("https://t.me/hackathon_helperbot?start=")
-    assert issued["mini_apps"]["max"].startswith("https://max.ru/helper_max?startapp=")
-    assert issued["mini_apps"]["vk"].startswith(f"https://vk.com/app{VK_APP_ID}#")
-    assert issued["web_link"].startswith("https://assistant.test/?link=")
-    assert issued["expires_in"] == 900
-    assert int(time.time()) > 0
-
-
-async def test_start_param_links_web_account_to_vk(auth: AuthService, session_factory) -> None:
-    web_session = await create_web_session(auth, "vk-link-test@example.com")
-    async with session_factory() as session:
-        session.add(
-            Event(
-                user_id=web_session.user_id,
-                type=EventType.TASK,
-                title="Задача из веба для ВК",
-                status=EventStatus.PENDING,
-                source=Platform.WEB,
-            )
-        )
-        await session.commit()
-
-    issued = await auth.issue_link_code(web_session.identity)
-    code = issued["code"]
-
-    vk_session = await auth.open_session(
-        Platform.VK,
-        vk_launch_params(start_param=code, urlsafe=True),
-    )
-
-    assert vk_session.link_redeemed is True
-    assert vk_session.user_id == web_session.user_id
-    platforms = {identity.platform for identity in vk_session.linked}
-    assert {Platform.WEB, Platform.VK} <= platforms
-
-    async with session_factory() as session:
-        rows = (await session.execute(select(Event).where(Event.user_id == vk_session.user_id))).scalars()
-        assert [row.title for row in rows.all()] == ["Задача из веба для ВК"]
-
-
-async def test_start_param_links_web_account_to_max(auth: AuthService, session_factory) -> None:
-    web_session = await create_web_session(auth, "max-link-test@example.com")
-    async with session_factory() as session:
-        session.add(
-            Event(
-                user_id=web_session.user_id,
-                type=EventType.TASK,
-                title="Задача из веба для MAX",
-                status=EventStatus.PENDING,
-                source=Platform.WEB,
-            )
-        )
-        await session.commit()
-
-    issued = await auth.issue_link_code(web_session.identity)
-    code = issued["code"]
-
-    max_session = await auth.open_session(
-        Platform.MAX,
-        max_init_data(start_param=code),
-    )
-
-    assert max_session.link_redeemed is True
-    assert max_session.user_id == web_session.user_id
-    platforms = {identity.platform for identity in max_session.linked}
-    assert {Platform.WEB, Platform.MAX} <= platforms
-
-    async with session_factory() as session:
-        rows = (await session.execute(select(Event).where(Event.user_id == max_session.user_id))).scalars()
-        assert [row.title for row in rows.all()] == ["Задача из веба для MAX"]
-
+    assert links["telegram"] == "https://t.me/hackathon_helperbot"
+    assert links["max"] == "https://max.ru/helper_max"
+    assert links["vk"] == f"https://vk.com/app{VK_APP_ID}"
+    assert links["web"] == "https://assistant.test/"

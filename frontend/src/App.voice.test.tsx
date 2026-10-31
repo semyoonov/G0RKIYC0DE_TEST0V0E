@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import { clearSpeechCache } from "./lib/api";
+import { bootstrapSession } from "./lib/session";
 
 // The microphone is replaced by a controllable stub: jsdom has no audio capture,
 // and the one-shot path must end with an audio blob, like browsers without streaming.
@@ -37,6 +38,18 @@ vi.mock("./hooks/useVoiceStream", async () => {
 
 const CATALOGUE = ["Mer-Operator", "Kaz-Lifelike", "Gli-Operator", "Bab-Debate", "Bab-Energetic"];
 const ANSWER = "Сегодня в 10:00 встреча с командой.";
+
+function guestSession() {
+  return {
+    token: "app-token",
+    identity: { platform: "web", platform_title: "Веб", external_id: "guest-1", display_name: null },
+    user: { id: 1 },
+    linked: [],
+    mini_apps: { telegram: null, max: null, vk: null, web: "https://example.test/" },
+    email: null,
+    has_password: false,
+  };
+}
 
 interface Call {
   url: string;
@@ -116,6 +129,7 @@ beforeEach(() => {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, init });
+      if (url === "/api/auth/guest" || url === "/api/auth/me") return json(guestSession());
       if (url === "/api/meta") return metaHandler();
       if (url === "/api/chat") return json(chatReply());
       if (url === "/api/speech") return speechHandler(init);
@@ -131,6 +145,10 @@ beforeEach(() => {
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: vi.fn() });
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => Promise.resolve());
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+});
+
+beforeEach(async () => {
+  await bootstrapSession();
 });
 
 afterEach(() => {

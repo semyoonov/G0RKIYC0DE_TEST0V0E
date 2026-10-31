@@ -110,10 +110,10 @@ class Application:
         if self.settings.telegram_enabled:
             self.tasks.append(asyncio.create_task(self._run_telegram(), name="telegram-bot"))
         if self.settings.max_enabled:
-            self.max_bot = MaxBot(self.assistant, self.settings, self.auth)
+            self.max_bot = MaxBot(self.assistant, self.settings)
             await self.max_bot.start()
         if self.settings.vk_enabled:
-            self.vk_bot = VkBot(self.assistant, self.settings, self.auth)
+            self.vk_bot = VkBot(self.assistant, self.settings)
             await self.vk_bot.start()
         if self.settings.enable_scheduler:
             await self._register_reminder_notifiers()
@@ -163,7 +163,7 @@ class Application:
         delay = 5
         while not self._stopping:
             try:
-                await run_telegram_bot(self.assistant, self.settings, self.auth)
+                await run_telegram_bot(self.assistant, self.settings)
                 return
             except asyncio.CancelledError:
                 raise

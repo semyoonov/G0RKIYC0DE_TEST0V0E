@@ -7,7 +7,7 @@ from app.db.base import Base
 
 
 class UserEmail(Base):
-    """A verified email address and the stable web identity used for sessions."""
+    """A login email and the stable web identity used for sessions."""
 
     __tablename__ = "user_emails"
     __table_args__ = (
@@ -19,7 +19,8 @@ class UserEmail(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     email_normalized: Mapped[str] = mapped_column(String(254), nullable=False)
     web_identity_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
 
     def __repr__(self) -> str:

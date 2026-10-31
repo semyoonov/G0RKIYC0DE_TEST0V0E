@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import pytest
 from icalendar import Calendar
 
 from app.core.recurrence import detect_rrule, format_rrule_ru, next_recurrence

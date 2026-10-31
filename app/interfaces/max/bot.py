@@ -13,7 +13,6 @@ from app.interfaces.max.handlers import handle_update
 if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
     from app.core.config import Settings
-    from app.services.auth.service import AuthService
 
 log = get_logger(__name__)
 
@@ -194,11 +193,9 @@ class MaxBot:
         self,
         assistant: AssistantService,
         settings: Settings,
-        auth: AuthService | None = None,
     ) -> None:
         self._assistant = assistant
         self._settings = settings
-        self._auth = auth
         self._client: MaxClient | None = None
         self._task: asyncio.Task[None] | None = None
         self._marker: int | None = None
@@ -259,7 +256,6 @@ class MaxBot:
                         update,
                         self._assistant,
                         self._settings.tz,
-                        auth=self._auth,
                         settings=self._settings,
                     )
                 except asyncio.CancelledError:

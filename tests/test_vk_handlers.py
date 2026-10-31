@@ -107,15 +107,6 @@ class FakeAssistant:
         return make_event(event_id)
 
 
-class FakeAuth:
-    def __init__(self) -> None:
-        self.identities: list[tuple[Platform, str]] = []
-
-    async def issue_link_code(self, identity) -> dict[str, Any]:
-        self.identities.append((identity.platform, identity.external_id))
-        return {"code": "AB12CD"}
-
-
 def make_message(text: str = "", attachments: list[Any] | None = None, user_id: int = 777) -> Any:
     return SimpleNamespace(from_id=user_id, peer_id=user_id, text=text, attachments=attachments or [])
 
@@ -123,7 +114,7 @@ def make_message(text: str = "", attachments: list[Any] | None = None, user_id: 
 async def test_start_replies_with_greeting_and_keyboard() -> None:
     api, assistant = FakeApi(), FakeAssistant()
 
-    await handle_message(make_message("/start"), api, assistant, make_settings(), None)
+    await handle_message(make_message("/start"), api, assistant, make_settings())
 
     assert api.log[0]["message"] == GREETING
     assert api.log[0]["keyboard"]
@@ -133,7 +124,7 @@ async def test_start_replies_with_greeting_and_keyboard() -> None:
 async def test_text_goes_through_assistant() -> None:
     api, assistant = FakeApi(), FakeAssistant()
 
-    await handle_message(make_message("Напомни завтра про отчёт"), api, assistant, make_settings(), None)
+    await handle_message(make_message("Напомни завтра про отчёт"), api, assistant, make_settings())
 
     assert assistant.text_calls == [(Platform.VK, "777", "Напомни завтра про отчёт")]
     assert api.log[0]["message"] == "Ответ: Напомни завтра про отчёт"
@@ -151,19 +142,10 @@ async def test_voice_attachment_is_transcribed(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(handlers, "download_voice", fake_download)
 
-    await handle_message(make_message("", [attachment]), api, assistant, make_settings(), None)
+    await handle_message(make_message("", [attachment]), api, assistant, make_settings())
 
     assert assistant.voice_calls == [(Platform.VK, "777", b"OGGDATA", "ogg", False)]
     assert "attachment" not in api.log[0]
-
-
-async def test_link_command_prints_code() -> None:
-    api, assistant, auth = FakeApi(), FakeAssistant(), FakeAuth()
-
-    await handle_message(make_message("/link"), api, assistant, make_settings(), auth)
-
-    assert auth.identities == [(Platform.VK, "777")]
-    assert "AB12CD" in api.log[0]["message"]
 
 
 async def test_app_command_sends_the_mini_app_button() -> None:
@@ -174,7 +156,6 @@ async def test_app_command_sends_the_mini_app_button() -> None:
         api,
         assistant,
         make_settings(vk_mini_app_id=54852072),
-        None,
     )
 
     assert "vk.com/app54852072" in api.log[0]["message"]
@@ -185,17 +166,9 @@ async def test_app_command_sends_the_mini_app_button() -> None:
 async def test_start_keyboard_has_no_app_button_without_app_id() -> None:
     api, assistant = FakeApi(), FakeAssistant()
 
-    await handle_message(make_message("/start"), api, assistant, make_settings(), None)
+    await handle_message(make_message("/start"), api, assistant, make_settings())
 
     assert '"open_link"' not in api.log[0]["keyboard"]
-
-
-async def test_link_command_without_auth_is_refused() -> None:
-    api, assistant = FakeApi(), FakeAssistant()
-
-    await handle_message(make_message("/link"), api, assistant, make_settings(), None)
-
-    assert api.log[0]["message"] == "Привязка аккаунта недоступна."
 
 
 async def test_assistant_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -206,7 +179,7 @@ async def test_assistant_failure_is_reported(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(assistant, "handle_text", boom)
 
-    await handle_message(make_message("привет"), api, assistant, make_settings(), None)
+    await handle_message(make_message("привет"), api, assistant, make_settings())
 
     assert api.log[0]["message"] == ERROR_REPLY
 
@@ -235,27 +208,4 @@ async def test_callback_completes_the_event() -> None:
 def test_event_id_payload_parsing(payload: Any, expected: int | None) -> None:
     assert _event_id_from_payload(payload) == expected
 
-
-async def test_start_command_with_link_code_redeems_and_confirms() -> None:
-    api, assistant = FakeApi(), FakeAssistant()
-
-    class FakeAuth:
-        def __init__(self) -> None:
-            self.redeemed: list[tuple[Any, str]] = []
-
-        async def redeem(self, identity: Any, code: str) -> None:
-            self.redeemed.append((identity, code))
-
-    fake_auth = FakeAuth()
-    await handle_message(
-        make_message("/start LINK_VK_XYZ"),
-        api,
-        assistant,
-        make_settings(),
-        fake_auth,  # type: ignore[arg-type]
-    )
-
-    assert len(fake_auth.redeemed) == 1
-    assert fake_auth.redeemed[0][1] == "LINK_VK_XYZ"
-    assert "привязан" in api.log[0]["message"]
 

@@ -3,14 +3,12 @@ import { createRoot } from "react-dom/client";
 
 import App from "./App";
 import { detectLaunch, initializePlatform } from "./lib/platform";
-import { bootstrapSession } from "./lib/session";
 import "./index.css";
 
 const container = document.getElementById("root");
 if (!container) throw new Error("root container is missing");
 
 initializePlatform(detectLaunch().platform);
-void bootstrapSession();
 
 createRoot(container).render(
   <StrictMode>

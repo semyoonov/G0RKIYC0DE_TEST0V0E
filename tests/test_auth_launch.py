@@ -37,7 +37,6 @@ def telegram_init_data(
     *,
     user: dict | None = None,
     auth_date: int | None = None,
-    start_param: str | None = None,
     token: str = TELEGRAM_TOKEN,
 ) -> str:
     params = {
@@ -49,12 +48,10 @@ def telegram_init_data(
             ensure_ascii=False,
         ),
     }
-    if start_param:
-        params["start_param"] = start_param
     return urlencode(_signed_params(params, token, exclude={"hash"}))
 
 
-def max_init_data(*, user: dict | None = None, start_param: str | None = None, token: str = MAX_TOKEN) -> str:
+def max_init_data(*, user: dict | None = None, token: str = MAX_TOKEN) -> str:
     params = {
         "auth_date": str(int(time.time())),
         "user": json.dumps(
@@ -64,8 +61,6 @@ def max_init_data(*, user: dict | None = None, start_param: str | None = None, t
         ),
         "signature": "ignored-by-the-signature",
     }
-    if start_param:
-        params["start_param"] = start_param
     return urlencode(_signed_params(params, token, exclude={"hash", "signature"}))
 
 
@@ -74,7 +69,6 @@ def vk_launch_params(
     user_id: int = 555,
     secret: str = VK_SECRET,
     app_id: int = VK_APP_ID,
-    start_param: str | None = None,
     urlsafe: bool = False,
 ) -> str:
     params = {
@@ -88,9 +82,6 @@ def vk_launch_params(
         "vk_ts": str(int(time.time())),
         "vk_user_id": str(user_id),
     }
-    if start_param:
-        params["vk_app_hash"] = f"startapp={start_param}"
-        params["startapp"] = start_param
     check = "&".join(f"{key}={params[key]}" for key in sorted(params) if key.startswith("vk_"))
     signature = hmac.new(secret.encode(), check.encode(), hashlib.sha256).digest()
     if urlsafe:
@@ -111,13 +102,6 @@ def test_telegram_init_data_is_accepted() -> None:
     assert context.identity.platform is Platform.TELEGRAM
     assert context.identity.external_id == "42"
     assert context.identity.display_name == "Аня Петрова"
-    assert context.start_param is None
-
-
-def test_telegram_init_data_carries_start_param() -> None:
-    context = telegram_identity(telegram_init_data(start_param="AB12CD"), TELEGRAM_TOKEN)
-
-    assert context.start_param == "AB12CD"
 
 
 def test_telegram_init_data_rejects_tampering() -> None:
@@ -140,11 +124,11 @@ def test_telegram_init_data_requires_configured_token() -> None:
 
 
 def test_max_init_data_is_accepted_and_skips_signature() -> None:
-    context = max_identity(max_init_data(start_param="XY34ZT"), MAX_TOKEN)
+    context = max_identity(max_init_data(), MAX_TOKEN)
 
     assert context.identity.platform is Platform.MAX
     assert context.identity.external_id == "77"
-    assert context.start_param == "XY34ZT"
+    assert context.identity.display_name == "Максим"
 
 
 def test_max_init_data_rejects_foreign_token() -> None:

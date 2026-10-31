@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime
 
 from dateutil.rrule import rrulestr
 

@@ -53,18 +53,6 @@ def period_bounds(period: Period, tz: ZoneInfo, now: datetime | None = None, day
     return today, today + timedelta(days=days)
 
 
-def format_day(value: datetime, tz: ZoneInfo) -> str:
-    local = to_local(value, tz)
-    assert local is not None
-    return local.strftime("%d.%m.%Y")
-
-
-def format_time(value: datetime, tz: ZoneInfo) -> str:
-    local = to_local(value, tz)
-    assert local is not None
-    return local.strftime("%H:%M")
-
-
 def format_datetime(value: datetime, tz: ZoneInfo, now: datetime | None = None) -> str:
     local = to_local(value, tz)
     assert local is not None

@@ -105,7 +105,8 @@ class EventRepository(BaseRepository[Event]):
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
-    async def create(self, user_id: int, data: EventCreate) -> Event:
+    async def create(self, user_id: int, data: EventCreate, *, commit: bool = True) -> Event:
+        """Insert an event; `commit=False` keeps it in the caller's transaction."""
         event = Event(
             user_id=user_id,
             type=data.type,
@@ -117,7 +118,11 @@ class EventRepository(BaseRepository[Event]):
             status=data.status,
             source=data.source,
         )
-        return await self.add(event)
+        if commit:
+            return await self.add(event)
+        self.session.add(event)
+        await self.session.flush()
+        return event
 
     async def update(self, event: Event, data: EventUpdate) -> Event:
         payload = data.model_dump(exclude_unset=True)

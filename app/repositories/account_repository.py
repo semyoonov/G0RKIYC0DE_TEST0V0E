@@ -1,33 +1,30 @@
 from __future__ import annotations
 
-import secrets
-from datetime import datetime, timedelta
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.timeutils import to_db, utcnow
 from app.db.models.account_link import AccountLink
 from app.db.models.event import Event
 from app.db.models.user_email import UserEmail
-from app.db.models.link_code import LinkCode
 from app.db.models.user import User
 from app.domain.enums import Platform
 from app.domain.identity import Identity
 from app.repositories.base import BaseRepository
 
-CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-CODE_LENGTH = 6
-DEFAULT_CODE_TTL_SECONDS = 15 * 60
 
-
-class LinkCodeError(ValueError):
-    """The code is unknown, already used or expired."""
+CreatedHook = Callable[[AsyncSession, User], Awaitable[None]]
 
 
 class AccountRepository(BaseRepository[User]):
     """Resolves platform identities to the account row that owns the events."""
 
     model = User
+
+    def __init__(self, session: AsyncSession, *, on_created: CreatedHook | None = None) -> None:
+        super().__init__(session)
+        self._on_created = on_created
 
     async def resolve(
         self,
@@ -39,7 +36,7 @@ class AccountRepository(BaseRepository[User]):
         """Find or create the owner of an identity.
 
         Set commit=False when this lookup is part of a larger transaction, such as
-        verifying an email code and merging accounts atomically.
+        registering an email and merging accounts atomically.
         """
         user = await self._by_identity(identity.platform, identity.external_id)
         if user is not None:
@@ -60,11 +57,12 @@ class AccountRepository(BaseRepository[User]):
             timezone=timezone or "Europe/Moscow",
         )
         self.session.add(user)
+        await self.session.flush()
+        if self._on_created is not None:
+            await self._on_created(self.session, user)
         if commit:
             await self.session.commit()
             await self.session.refresh(user)
-        else:
-            await self.session.flush()
         return user
 
     async def identities(self, user: User) -> list[Identity]:
@@ -83,7 +81,7 @@ class AccountRepository(BaseRepository[User]):
         """Bind an identity to target, merging the identity's entire old account if needed.
 
         The merge moves events, email identities and all other platform links. `commit=False`
-        lets a higher-level service combine this operation with a verification-code update.
+        lets a higher-level service combine this operation with a credentials update.
         """
         target_primary = (target.platform, target.external_id)
         identity_key = (identity.platform, identity.external_id)
@@ -164,55 +162,6 @@ class AccountRepository(BaseRepository[User]):
 
         await self.session.delete(source)
         await self.session.flush()
-
-    async def issue_code(
-        self,
-        user: User,
-        platform: Platform,
-        ttl_seconds: int = DEFAULT_CODE_TTL_SECONDS,
-        *,
-        now: datetime | None = None,
-    ) -> LinkCode:
-        moment = now or to_db(utcnow())
-        for _ in range(8):
-            code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
-            if await self.find_code(code) is None:
-                break
-        else:  # pragma: no cover - six characters of a 32-letter alphabet never collide eight times
-            raise LinkCodeError("cannot allocate a unique link code")
-        row = LinkCode(
-            code=code,
-            user_id=user.id,
-            platform=platform,
-            expires_at=moment + timedelta(seconds=ttl_seconds),
-        )
-        self.session.add(row)
-        await self.session.commit()
-        await self.session.refresh(row)
-        return row
-
-    async def find_code(self, code: str) -> LinkCode | None:
-        normalized = code.strip().upper()
-        if not normalized:
-            return None
-        result = await self.session.execute(select(LinkCode).where(LinkCode.code == normalized))
-        return result.scalar_one_or_none()
-
-    async def redeem_code(self, code: str, *, now: datetime | None = None) -> User:
-        row = await self.find_code(code)
-        moment = now or to_db(utcnow())
-        if row is None:
-            raise LinkCodeError("код не найден")
-        if row.used_at is not None:
-            raise LinkCodeError("код уже использован")
-        if row.expires_at <= moment:
-            raise LinkCodeError("срок действия кода истёк")
-        owner = await self.session.get(User, row.user_id)
-        if owner is None:
-            raise LinkCodeError("аккаунт кода не найден")
-        row.used_at = moment
-        await self.session.commit()
-        return owner
 
     async def _by_identity(self, platform: Platform, external_id: str) -> User | None:
         result = await self.session.execute(

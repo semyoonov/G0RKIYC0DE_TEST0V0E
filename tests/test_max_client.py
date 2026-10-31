@@ -491,40 +491,6 @@ async def test_handle_update_greets_on_bot_started() -> None:
     assert "Привет" in replies[0]["text"]
 
 
-async def test_handle_update_bot_started_with_link_code() -> None:
-    assistant = StubAssistant()
-    replies: list[dict[str, Any]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        replies.append(json.loads(request.content))
-        return httpx.Response(200, json={"ok": True})
-
-    class StubAuth:
-        def __init__(self) -> None:
-            self.redeemed: list[tuple[Any, str]] = []
-
-        async def redeem(self, identity: Any, code: str) -> None:
-            self.redeemed.append((identity, code))
-
-    stub_auth = StubAuth()
-    client = make_client(handler)
-    update = {
-        "update_type": "bot_started",
-        "chat_id": 99,
-        "user": {"user_id": 99, "username": "tester"},
-        "payload": "startapp=LINK123",
-    }
-    try:
-        await handle_update(client, update, assistant, MOSCOW, auth=stub_auth)  # type: ignore[arg-type]
-    finally:
-        await client.close()
-
-    assert len(stub_auth.redeemed) == 1
-    assert stub_auth.redeemed[0][1] == "LINK123"
-    assert len(replies) == 1
-    assert "привязан" in replies[0]["text"]
-
-
 async def test_handle_update_ignores_non_message_updates() -> None:
     assistant = StubAssistant()
 

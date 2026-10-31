@@ -16,6 +16,7 @@ from app.domain.enums import EventStatus, Period, Platform
 from app.domain.models import AssistantResponse, EventRead, EventUpdate
 from app.repositories.event_repository import EventRepository
 from app.repositories.user_repository import UserRepository
+from app.services.demo_seed import seed_demo_events
 from app.services.cache.redis_service import CacheService
 
 log = get_logger(__name__)
@@ -96,6 +97,12 @@ class AssistantService:
         self._tts = tts
         self._converter = converter
         self._cache = cache
+
+    def _users(self, session: AsyncSession) -> UserRepository:
+        return UserRepository(session, on_created=self._seed_demo_events if self._settings.demo_seed_enabled else None)
+
+    async def _seed_demo_events(self, session: AsyncSession, user) -> None:
+        await seed_demo_events(session, user, self._settings.timezone)
 
     @property
     def llm_enabled(self) -> bool:
@@ -206,7 +213,7 @@ class AssistantService:
     ) -> list[EventRead]:
         start, end = period_bounds(period, self._settings.tz)
         async with self._session_factory() as session:
-            user = await UserRepository(session).get_or_create(platform, external_user_id)
+            user = await self._users(session).get_or_create(platform, external_user_id)
             events = await EventRepository(session).list_for_period(
                 user.id,
                 start,
@@ -224,7 +231,7 @@ class AssistantService:
         from app.services.calendar_export import export_events_to_ics
         tz_name = timezone_name or self._settings.timezone
         async with self._session_factory() as session:
-            user = await UserRepository(session).get_or_create(platform, external_user_id)
+            user = await self._users(session).get_or_create(platform, external_user_id)
             events = await EventRepository(session).list_all_for_user(user.id)
             return export_events_to_ics(events, timezone_name=tz_name)
 
@@ -236,7 +243,7 @@ class AssistantService:
         status: EventStatus,
     ) -> EventRead:
         async with self._session_factory() as session:
-            user = await UserRepository(session).get_or_create(platform, external_user_id)
+            user = await self._users(session).get_or_create(platform, external_user_id)
             repository = EventRepository(session)
             event = await repository.get_for_user(user.id, event_id)
             if event is None:
@@ -270,7 +277,7 @@ class AssistantService:
         closing: bool = False,
     ) -> AssistantResponse:
         async with self._session_factory() as session:
-            user = await UserRepository(session).get_or_create(platform, external_user_id)
+            user = await self._users(session).get_or_create(platform, external_user_id)
             executor = ToolExecutor(session, user, self._settings, self._cache)
             # End the read transaction so the connection is not held during model and messenger calls.
             await session.commit()

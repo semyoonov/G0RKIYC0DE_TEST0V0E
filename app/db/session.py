@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.db.base import Base
-from app.db.models import AccountLink, EmailChallenge, Event, LinkCode, User, UserEmail  # noqa: F401  (register mappers before create_all)
+from app.db.models import AccountLink, Event, User, UserEmail  # noqa: F401  (register mappers before create_all)
 
-__all__ = ["AccountLink", "Database", "EmailChallenge", "Event", "LinkCode", "User", "UserEmail"]
+__all__ = ["AccountLink", "Database", "Event", "User", "UserEmail"]
 
 
 class Database:
@@ -30,19 +30,9 @@ class Database:
             yield session
 
     async def create_all(self) -> None:
+        """Create the schema from the models; an existing database is migrated by Alembic."""
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
-            await connection.run_sync(self._ensure_columns)
-
-    @staticmethod
-    def _ensure_columns(sync_conn: Any) -> None:
-        from sqlalchemy import inspect, text
-        inspector = inspect(sync_conn)
-        tables = inspector.get_table_names()
-        if "events" in tables:
-            columns = {col["name"] for col in inspector.get_columns("events")}
-            if "rrule" not in columns:
-                sync_conn.execute(text("ALTER TABLE events ADD COLUMN rrule VARCHAR(255)"))
 
     async def drop_all(self) -> None:
         async with self.engine.begin() as connection:

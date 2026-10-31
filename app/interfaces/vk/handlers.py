@@ -9,14 +9,7 @@ from app.core.exceptions import ExternalServiceError
 from app.core.logger import get_logger
 from app.domain.enums import EventStatus, Platform
 from app.interfaces.cards import action_label, cards_text, pending_events
-from app.interfaces.linking import (
-    app_text,
-    display_name_of,
-    identity_for,
-    link_code_text,
-)
-from app.interfaces.email_linking import confirm_email_link, request_email_link
-from app.services.auth.service import LinkCodeError
+from app.interfaces.linking import app_text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -28,7 +21,6 @@ if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
     from app.core.config import Settings
     from app.domain.models import AssistantResponse, EventRead
-    from app.services.auth.service import AuthService
 
 log = get_logger(__name__)
 
@@ -40,7 +32,7 @@ HELP = (
     "Я сохраняю задачи, встречи и напоминания и напоминаю о них.\n"
     "Примеры: «Завтра в 10 встреча с командой», «Напомни в пятницу про отчёт».\n"
     "Можно отправлять голосовые — я распознаю речь.\n"
-    "/link — код привязки аккаунта, /app — мини-приложение."
+    "/app — приложение: календарь и вход по почте и паролю на других устройствах."
 )
 ERROR_REPLY = "Не получилось обработать запрос, попробуйте ещё раз."
 QUICK_ACTIONS = ("Что у меня сегодня?", "Что на завтра?", "Что на этой неделе?")
@@ -131,7 +123,6 @@ def main_keyboard(settings: Settings) -> Any:
         keyboard.add(Text(action), color=KeyboardButtonColor.PRIMARY)
         keyboard.row()
     keyboard.add(Text("Помощь"), color=KeyboardButtonColor.SECONDARY)
-    keyboard.add(Text("Привязать аккаунт"), color=KeyboardButtonColor.SECONDARY)
     app_link = settings.mini_app_link(Platform.VK)
     if app_link:
         keyboard.row()
@@ -155,7 +146,6 @@ async def handle_message(
     api: API,
     assistant: AssistantService,
     settings: Settings,
-    auth: AuthService | None,
 ) -> None:
     user_id = message.from_id
     peer_id = message.peer_id
@@ -164,76 +154,10 @@ async def handle_message(
     parts = text.split(maxsplit=1)
     cmd = parts[0].lower() if parts else ""
     if cmd in {"/start", "начать", "start"}:
-        raw_code = parts[1].strip() if len(parts) > 1 else ""
-        if raw_code.startswith("startapp="):
-            code = raw_code[len("startapp="):].strip()
-        elif raw_code.startswith("start="):
-            code = raw_code[len("start="):].strip()
-        elif raw_code.startswith("link="):
-            code = raw_code[len("link="):].strip()
-        else:
-            code = raw_code
-        if code and auth is not None:
-            identity = identity_for(Platform.VK, user_id, display_name_of(None))
-            try:
-                await auth.redeem(identity, code)
-                log.info("VK: redeemed link code %s for user %s via /start", code, user_id)
-                await send_text(
-                    api,
-                    peer_id,
-                    "✅ Аккаунт успешно привязан!\n"
-                    "Теперь ваши задачи, встречи и напоминания синхронизированы между ВКонтакте и веб-версией.\n\n"
-                    f"{GREETING}",
-                    keyboard=main_keyboard(settings),
-                )
-                return
-            except LinkCodeError as exc:
-                await send_text(
-                    api,
-                    peer_id,
-                    f"❌ Не удалось привязать аккаунт: {exc}.\n\n"
-                    "Получите новый код в веб-приложении или используйте /link для создания кода.",
-                    keyboard=main_keyboard(settings),
-                )
-                return
-            except Exception:
-                log.exception("VK: link redeem failed for user %s", user_id)
-                await send_text(
-                    api,
-                    peer_id,
-                    "❌ Не удалось привязать аккаунт, попробуйте ещё раз.",
-                    keyboard=main_keyboard(settings),
-                )
-                return
         await send_text(api, peer_id, GREETING, keyboard=main_keyboard(settings))
         return
     if text.lower() in {"/help", "помощь", "help"}:
         await send_text(api, peer_id, HELP, keyboard=main_keyboard(settings))
-        return
-    if text.lower() in {"/link", "привязать аккаунт"}:
-        await _send_link_code(api, peer_id, user_id, message, auth, settings)
-        return
-    if text.lower() == "/email" or text.lower().startswith("/email "):
-        if auth is None:
-            await send_text(api, peer_id, "Привязка по email временно недоступна.", keyboard=main_keyboard(settings))
-            return
-        parts = text.split(maxsplit=1)
-        if len(parts) != 2:
-            await send_text(api, peer_id, "Использование: /email ваш-адрес@example.com", keyboard=main_keyboard(settings))
-            return
-        identity = identity_for(Platform.VK, user_id, display_name_of(None))
-        await send_text(api, peer_id, await request_email_link(auth, identity, parts[1].strip()), keyboard=main_keyboard(settings))
-        return
-    if text.lower() == "/emailcode" or text.lower().startswith("/emailcode "):
-        if auth is None:
-            await send_text(api, peer_id, "Привязка по email временно недоступна.", keyboard=main_keyboard(settings))
-            return
-        parts = text.split()
-        if len(parts) != 3:
-            await send_text(api, peer_id, "Использование: /emailcode ваш-адрес@example.com 123456", keyboard=main_keyboard(settings))
-            return
-        identity = identity_for(Platform.VK, user_id, display_name_of(None))
-        await send_text(api, peer_id, await confirm_email_link(auth, identity, parts[1], parts[2]), keyboard=main_keyboard(settings))
         return
     if text.lower() in {"/app", "приложение"}:
         app_link = settings.mini_app_link(Platform.VK)
@@ -261,29 +185,6 @@ async def handle_message(
         await send_text(api, peer_id, ERROR_REPLY)
         return
     await send_reply(api, peer_id, user_id, response, settings.tz)
-
-
-async def _send_link_code(
-    api: API,
-    peer_id: int,
-    user_id: int,
-    message: Message,
-    auth: AuthService | None,
-    settings: Settings,
-) -> None:
-    if auth is None:
-        await send_text(api, peer_id, "Привязка аккаунта недоступна.")
-        return
-    sender = getattr(message, "from_id", None)
-    name = None
-    identity = identity_for(Platform.VK, user_id, display_name_of(name))
-    try:
-        code = await auth.issue_link_code(identity)
-    except Exception:
-        log.exception("vk: link code request failed for user %s", sender or user_id)
-        await send_text(api, peer_id, "Не удалось создать код привязки, попробуйте ещё раз.")
-        return
-    await send_text(api, peer_id, link_code_text(settings, code["code"]))
 
 
 async def handle_callback_payload(

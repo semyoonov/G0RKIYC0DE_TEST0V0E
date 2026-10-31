@@ -46,18 +46,10 @@ export interface AuthSession {
   identity: SessionIdentity;
   user: { id: number };
   linked: SessionIdentity[];
-  start_param: string | null;
-  link_redeemed: boolean;
   mini_apps: MiniApps;
-}
-
-export interface LinkCodeResponse {
-  code: string;
-  expires_at: string;
-  expires_in: number;
-  platform: SessionPlatform;
-  mini_apps: MiniApps;
-  web_link: string;
+  /** Login address of the account; null while the visitor stays a guest. */
+  email: string | null;
+  has_password: boolean;
 }
 
 export interface Meta {

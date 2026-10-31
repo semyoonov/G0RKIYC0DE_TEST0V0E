@@ -7,9 +7,7 @@ from zoneinfo import ZoneInfo
 from app.core.exceptions import AssistantError, ExternalServiceError
 from app.core.logger import get_logger
 from app.domain.enums import EventStatus, Platform
-from app.interfaces.linking import app_text, display_name_of, identity_for, link_code_text
-from app.interfaces.email_linking import confirm_email_link, request_email_link
-from app.services.auth.service import LinkCodeError
+from app.interfaces.linking import app_text
 from app.interfaces.cards import (
     action_label,
     cards_text,
@@ -21,7 +19,6 @@ from app.interfaces.cards import (
 if TYPE_CHECKING:
     from app.ai.assistant import AssistantService
     from app.core.config import Settings
-    from app.services.auth.service import AuthService
     from app.domain.models import AssistantResponse, EventRead
     from app.interfaces.max.bot import MaxClient
 
@@ -34,59 +31,13 @@ GREETING = (
 )
 HELP = (
     "Я сохраняю задачи, встречи и напоминания и напоминаю о них. "
-    "Напишите или запишите голосом, что и когда нужно сделать."
+    "Напишите или запишите голосом, что и когда нужно сделать. "
+    "/app — приложение: календарь и вход по почте и паролю на других устройствах."
 )
 _AUDIO_ATTACHMENT_TYPES = {"audio", "voice"}
 
 
-def _clean_code(raw: str | None) -> str:
-    if not raw:
-        return ""
-    cleaned = raw.strip().lstrip("?#")
-    if "=" in cleaned:
-        for part in cleaned.split("&"):
-            k, _, v = part.partition("=")
-            if k in ("start", "startapp", "link", "code", "ref") and v.strip():
-                return v.strip()
-    return cleaned
-
-
-async def _handle_start_flow(
-    client: MaxClient,
-    user_id: int | str,
-    sender: dict[str, Any],
-    raw_code: str,
-    auth: AuthService | None,
-) -> None:
-    code = _clean_code(raw_code)
-    if code and auth is not None:
-        name = sender.get("name") or sender.get("first_name")
-        identity = identity_for(
-            Platform.MAX,
-            user_id,
-            display_name_of(name if isinstance(name, str) else None, sender.get("username")),
-        )
-        try:
-            await auth.redeem(identity, code)
-            log.info("MAX: redeemed link code %s for user %s", code, user_id)
-            await client.send_text(
-                user_id,
-                "✅ Аккаунт успешно привязан!\n"
-                "Теперь ваши задачи, встречи и напоминания синхронизированы между MAX и веб-версией.\n\n"
-                f"{GREETING}",
-            )
-            return
-        except LinkCodeError as exc:
-            await client.send_text(
-                user_id,
-                f"❌ Не удалось привязать аккаунт: {exc}.\n\n"
-                "Получите новый код в веб-приложении или используйте /link для создания кода.",
-            )
-            return
-        except Exception:
-            log.exception("MAX: link redeem failed for user %s", user_id)
-            await client.send_text(user_id, "❌ Не удалось привязать аккаунт, попробуйте ещё раз.")
-            return
+async def _handle_start(client: MaxClient, user_id: int | str) -> None:
     await client.send_text(user_id, GREETING)
 
 
@@ -96,7 +47,6 @@ async def handle_update(
     assistant: AssistantService,
     tz: ZoneInfo,
     *,
-    auth: AuthService | None = None,
     settings: Settings | None = None,
 ) -> None:
     update_type = update.get("update_type")
@@ -109,9 +59,7 @@ async def handle_update(
         if user_id is None:
             log.warning("MAX bot_started update without user_id is skipped")
             return
-        payload = update.get("payload")
-        raw_code = str(payload).strip() if payload is not None else ""
-        await _handle_start_flow(client, user_id, sender, raw_code, auth)
+        await _handle_start(client, user_id)
         return
     if update_type != "message_created":
         return
@@ -129,45 +77,10 @@ async def handle_update(
     if _find_audio(attachments) is None and text:
         command = text.split(maxsplit=1)[0].lower()
         if command == "/start":
-            parts = text.split(maxsplit=1)
-            raw_code = parts[1].strip() if len(parts) > 1 else ""
-            await _handle_start_flow(client, user_id, sender, raw_code, auth)
+            await _handle_start(client, user_id)
             return
         if command == "/help":
             await client.send_text(user_id, HELP)
-            return
-        if command == "/link" and auth is not None and settings is not None:
-            await _send_link_code(client, user_id, sender, auth, settings)
-            return
-        if command == "/email":
-            if auth is None:
-                await client.send_text(user_id, "Привязка по email временно недоступна.")
-                return
-            parts = text.split(maxsplit=1)
-            if len(parts) != 2:
-                await client.send_text(user_id, "Использование: /email ваш-адрес@example.com")
-                return
-            name = sender.get("name") or sender.get("first_name")
-            identity = identity_for(
-                Platform.MAX, user_id,
-                display_name_of(name if isinstance(name, str) else None, sender.get("username")),
-            )
-            await client.send_text(user_id, await request_email_link(auth, identity, parts[1]))
-            return
-        if command == "/emailcode":
-            if auth is None:
-                await client.send_text(user_id, "Привязка по email временно недоступна.")
-                return
-            parts = text.split()
-            if len(parts) != 3:
-                await client.send_text(user_id, "Использование: /emailcode ваш-адрес@example.com 123456")
-                return
-            name = sender.get("name") or sender.get("first_name")
-            identity = identity_for(
-                Platform.MAX, user_id,
-                display_name_of(name if isinstance(name, str) else None, sender.get("username")),
-            )
-            await client.send_text(user_id, await confirm_email_link(auth, identity, parts[1], parts[2]))
             return
         if command == "/app" and settings is not None:
             await client.send_text(user_id, app_text(settings))
@@ -181,28 +94,6 @@ async def handle_update(
         return
     if response is not None:
         await _send_reply(client, user_id, response, tz)
-
-
-async def _send_link_code(
-    client: MaxClient,
-    user_id: int | str,
-    sender: dict[str, Any],
-    auth: AuthService,
-    settings: Settings,
-) -> None:
-    name = sender.get("name") or sender.get("first_name")
-    identity = identity_for(
-        Platform.MAX,
-        user_id,
-        display_name_of(name if isinstance(name, str) else None, sender.get("username")),
-    )
-    try:
-        code = await auth.issue_link_code(identity)
-    except Exception:  # noqa: BLE001 - a failed code must not kill the polling loop
-        log.exception("MAX link code request failed for user %s", user_id)
-        await client.send_text(user_id, "Не удалось создать код привязки, попробуйте ещё раз.")
-        return
-    await client.send_text(user_id, link_code_text(settings, code["code"]))
 
 
 async def _handle_callback(client: MaxClient, update: dict[str, Any], assistant: AssistantService) -> None:
