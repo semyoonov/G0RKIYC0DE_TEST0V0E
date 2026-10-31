@@ -110,6 +110,20 @@ async def test_task_with_a_named_day_keeps_no_invented_clock_time(session, user,
     assert "время не указано" in result.content
 
 
+async def test_dated_request_is_a_task_even_if_the_model_said_reminder(session, user, settings):
+    llm = FactsLLM(kind="task", has_date=True, has_time=False, weekday="пятница")
+    executor = ToolExecutor(session, user, settings, None, llm=llm, utterance="В пятницу нужно отправить отчет")
+
+    result = await executor.execute(
+        "create_task",
+        {"title": "отправить отчет", "is_reminder": True, "starts_at": "2026-11-03T19:00:00+03:00"},
+    )
+
+    assert not result.failed
+    assert result.events[0].type is EventType.TASK
+    assert result.events[0].starts_at.astimezone(MOSCOW).weekday() == 4
+
+
 async def test_reminder_without_a_named_time_is_not_created(session, user, settings):
     llm = FactsLLM(has_date=False, date=None, has_time=False, time=None)
     executor = ToolExecutor(session, user, settings, None, llm=llm, utterance="Напомни позвонить Ивану")

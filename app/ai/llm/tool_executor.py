@@ -199,8 +199,11 @@ class ToolExecutor:
 
     async def _create_task(self, arguments: dict[str, Any]) -> ToolResult:
         title = self._text(arguments.get("title"))
-        is_reminder = bool(arguments.get("is_reminder"))
         facts = await self._facts()
+        is_reminder = bool(arguments.get("is_reminder"))
+        if facts is not None and facts.kind in ("task", "reminder"):
+            # «В пятницу нужно отправить отчет» — задача, даже если модель назвала её напоминанием.
+            is_reminder = facts.kind == "reminder"
         time_named = facts.has_time if facts is not None else self._time_named(arguments)
         if self._is_empty_or_generic_task_title(title, is_reminder=is_reminder):
             if is_reminder:

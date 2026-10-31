@@ -23,7 +23,8 @@ _WEEKDAYS_SHORT = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 _FACTS_SCHEMA = (
     '{"has_date": bool, "date": "YYYY-MM-DD" | null, "has_time": bool, '
     '"time": "HH:MM" | null, "weekday": "понедельник"|"вторник"|"среда"|"четверг"|'
-    '"пятница"|"суббота"|"воскресенье" | null, "subject": string | null}'
+    '"пятница"|"суббота"|"воскресенье" | null, "kind": "task"|"reminder"|"meeting"|null, '
+    '"subject": string | null}'
 )
 
 
@@ -38,6 +39,7 @@ class TemporalFacts:
     has_time: bool = False
     time: time | None = None
     weekday: str | None = None
+    kind: str | None = None
     subject: str | None = None
 
 
@@ -56,6 +58,8 @@ def build_extraction_prompt(now: datetime) -> str:
         "«завтра», «в пятницу» — это дата, а не время. "
         "date заполняй, когда дата названа или однозначно следует из дня недели. "
         "weekday заполняй, только если день недели назван словами. "
+        "kind — что просит пользователь: задача, напоминание или встреча; "
+        "«напомни» — reminder, «встреча» — meeting, остальное — task. "
         "subject — название записи, о которой идёт речь, без глаголов и без времени; "
         "null, если пользователь ничего не меняет и не ищет."
     )
@@ -96,6 +100,10 @@ def facts_from_payload(payload: dict[str, Any]) -> TemporalFacts:
     weekday = weekday.strip().lower() if isinstance(weekday, str) else None
     if weekday not in _WEEKDAYS:
         weekday = None
+    kind = payload.get("kind")
+    kind = kind.strip().lower() if isinstance(kind, str) else None
+    if kind not in ("task", "reminder", "meeting"):
+        kind = None
     subject = payload.get("subject")
     subject = " ".join(subject.split()) if isinstance(subject, str) and subject.strip() else None
     moment_date = _parse_date(payload.get("date"))
@@ -106,6 +114,7 @@ def facts_from_payload(payload: dict[str, Any]) -> TemporalFacts:
         has_time=bool(payload.get("has_time")) or clock is not None,
         time=clock,
         weekday=weekday,
+        kind=kind,
         subject=subject,
     )
 
