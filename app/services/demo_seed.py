@@ -78,7 +78,10 @@ def _starts_at(now: datetime, event: DemoEvent) -> datetime | None:
         time(event.hour, event.minute),
         tzinfo=now.tzinfo,
     )
-    while moment <= now:
+    if moment <= now:
+        later_today = (now + timedelta(minutes=90)).replace(second=0, microsecond=0)
+        if later_today.date() == now.date() and later_today.hour < 23:
+            return later_today
         moment += timedelta(days=1)
     return moment
 

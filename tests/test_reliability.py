@@ -8,6 +8,8 @@ from app.ai.assistant import AssistantService, _humanize
 from app.ai.llm.gigachat_client import ChatCompletion
 from app.ai.llm.tool_executor import ToolExecutor
 from app.domain.enums import EventType, Platform
+from app.domain.models import EventCreate
+from app.repositories.event_repository import EventRepository
 from app.repositories.user_repository import UserRepository
 
 MOSCOW = timezone(timedelta(hours=3))
@@ -143,6 +145,36 @@ async def test_off_topic_request_is_refused_without_calling_the_model(settings):
 
     assert "только с задачами" in response.text
     assert llm.calls == []
+
+
+async def test_dated_task_is_not_turned_into_a_reminder(session, user, settings):
+    executor = ToolExecutor(
+        session, user, settings, None, utterance="В пятницу нужно отправить отчет"
+    )
+
+    result = await executor.execute(
+        "create_task", {"title": "отправить отчет", "is_reminder": True}
+    )
+
+    assert not result.failed
+    assert result.events[0].type is EventType.TASK
+
+
+async def test_search_prefers_the_nearer_record_when_names_tie(session, user):
+    repository = EventRepository(session)
+    now = datetime.now(MOSCOW)
+    await repository.create(
+        user.id,
+        EventCreate(type=EventType.MEETING, title="встреча с командой", starts_at=now + timedelta(days=1)),
+    )
+    await repository.create(
+        user.id,
+        EventCreate(type=EventType.MEETING, title="Планёрка команды", starts_at=now + timedelta(days=21)),
+    )
+
+    found = await repository.search(user.id, "перенеси встречу с командой на 18:00", limit=3)
+
+    assert found and found[0].title == "встреча с командой"
 
 
 def test_humanize_strips_leaked_syntax():

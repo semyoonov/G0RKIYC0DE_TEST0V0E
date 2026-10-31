@@ -283,6 +283,7 @@ class EventRepository(BaseRepository[Event]):
         wanted_type: EventType | None,
     ) -> list[Event]:
         """Order by how well the record matches, never by how recent it is."""
+        reference = utcnow().replace(tzinfo=None)  # stored timestamps are naive UTC
 
         def score(event: Event) -> tuple[int, int, float]:
             title = (event.title or "").lower().replace("ё", "е")
@@ -303,8 +304,13 @@ class EventRepository(BaseRepository[Event]):
                 value += 3
             if event.status is EventStatus.PENDING:
                 value += 1
-            recency = event.starts_at.timestamp() if event.starts_at is not None else 0.0
-            return (value, int(wanted_type is not None and event.type is wanted_type), recency)
+            # Among equally relevant records prefer the one nearest in time, not the furthest:
+            # "перенеси встречу с командой" must not grab next month's recurring stand-up.
+            if event.starts_at is None:
+                distance = 1e12
+            else:
+                distance = abs((event.starts_at - reference).total_seconds()) / 86400
+            return (value, int(wanted_type is not None and event.type is wanted_type), -distance)
 
         decorated = sorted(((score(event), event) for event in events), key=lambda pair: pair[0], reverse=True)
         return [event for _, event in decorated]

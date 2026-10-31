@@ -1,5 +1,6 @@
 import json
 from collections.abc import Awaitable, Callable
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Any
@@ -23,6 +24,7 @@ from app.services.cache.redis_service import CacheService
 log = get_logger(__name__)
 
 ERROR_PREFIX = "ОШИБКА:"
+_REMINDER_WORD = re.compile(r"напомн|напомин", re.I)
 # A day holds a handful of records; a month or "all" must not render a wall of cards.
 LIST_LIMIT = 25
 _ISO_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y")
@@ -197,6 +199,9 @@ class ToolExecutor:
     async def _create_task(self, arguments: dict[str, Any]) -> ToolResult:
         title = self._text(arguments.get("title"))
         is_reminder = bool(arguments.get("is_reminder"))
+        if self._utterance and not _REMINDER_WORD.search(self._utterance):
+            # «В пятницу нужно отправить отчет» — задача, даже если модель назвала её напоминанием.
+            is_reminder = False
         if self._is_empty_or_generic_task_title(title, is_reminder=is_reminder):
             if is_reminder:
                 return self._error("create_task", "как назвать напоминание? Уточни, о чём напомнить.")
