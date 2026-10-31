@@ -7,8 +7,7 @@ __pycache__/
 .mypy_cache/
 ruff_cache/
 temp_audio/
-models/*
-!models/.gitkeep
+# модель Vosk поставляется вместе с репозиторием: сборка не должна зависеть от сети
 certs/*
 !certs/.gitkeep
 *.sqlite3

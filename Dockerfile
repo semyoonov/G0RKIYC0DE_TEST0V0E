@@ -39,11 +39,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY . .
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
-ARG VOSK_MODEL_URL=https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
-RUN mkdir -p models \
-    && curl -fsSL --retry 3 --retry-delay 5 "$VOSK_MODEL_URL" -o /tmp/vosk-model.zip \
-    && unzip -q /tmp/vosk-model.zip -d models \
-    && rm /tmp/vosk-model.zip
+# Модель Vosk лежит в репозитории (models/vosk-model-small-ru-0.22): сборка не скачивает её из сети.
+RUN test -d models/vosk-model-small-ru-0.22 || (echo "Vosk model is missing from models/" && exit 1)
 
 EXPOSE 8000
 
