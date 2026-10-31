@@ -237,62 +237,6 @@
   display: none !important;
 }
 
-/* Диаграмма Ганта: колонка подписей фиксированной ширины, шкала дней растягивается
-   на свободное место, но никогда не уже комфортной ширины — лишнее уходит в прокрутку. */
-.gantt-grid {
-  --gantt-label: 180px;
-  --gantt-day: 74px;
-  --gantt-days: 14;
-}
-
-@media (min-width: 640px) {
-  .gantt-grid {
-    --gantt-label: 220px;
-  }
-}
-
-@media (min-width: 1280px) {
-  .gantt-grid {
-    --gantt-label: 260px;
-  }
-}
-
-.gantt-label {
-  width: var(--gantt-label);
-}
-
-.gantt-timeline {
-  flex: 0 0 auto;
-  width: max(calc(100% - var(--gantt-label)), calc(var(--gantt-days) * var(--gantt-day)));
-}
-
-/* Диаграмма Ганта: шкала листается вбок своей полосой прокрутки, не трогая страницу. */
-.gantt-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: #2b3446 transparent;
-  overscroll-behavior-x: contain;
-}
-
-.gantt-scroll::-webkit-scrollbar {
-  height: 10px;
-}
-
-.gantt-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.gantt-scroll::-webkit-scrollbar-thumb {
-  background: #2b3446;
-  background-clip: content-box;
-  border: 2px solid transparent;
-  border-radius: 999px;
-}
-
-.gantt-scroll::-webkit-scrollbar-thumb:hover {
-  background: #3a4559;
-  background-clip: content-box;
-}
-
 /* A long title must stay inside its day cell instead of spilling over the grid. */
 .fullcalendar-custom .fc-daygrid-event {
   max-width: 100%;

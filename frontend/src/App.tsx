@@ -16,9 +16,8 @@ import { useVoiceStream } from "./hooks/useVoiceStream";
 import type { ConversationPhase } from "./lib/conversation";
 import { readSpeakReplies, readVoice, writeSpeakReplies, writeVoice } from "./lib/preferences";
 import { bootstrapSession, useSession } from "./lib/session";
-import { Calendar as CalendarIcon, GanttChartSquare, MessageSquare } from "lucide-react";
+import { Calendar as CalendarIcon, MessageSquare } from "lucide-react";
 import { CalendarView } from "./components/CalendarView";
-import { GanttView } from "./components/GanttView";
 
 const DEFAULT_QUICK_ACTIONS = ["Что у меня сегодня?", "Что на завтра?", "Что на этой неделе?"];
 // Зеркало CLOUD_TTS_VOICES из app/ai/tts/cloud_tts.py: виден сразу, /api/meta его заменяет.
@@ -41,7 +40,7 @@ function initialTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Moscow";
 }
 
-type ViewMode = "chat" | "calendar" | "gantt";
+type ViewMode = "chat" | "calendar";
 
 export default function App() {
   const [timezone, setTimezone] = useState(initialTimezone);
@@ -230,7 +229,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Переключатель режимов: Чат / Календарь / Гант */}
+          {/* Переключатель режимов: Чат / Календарь */}
           <div className="order-2 flex h-9 items-center sm:order-2">
             <div className="flex items-center rounded-xl border border-line bg-panel p-0.5">
               <button
@@ -258,19 +257,6 @@ export default function App() {
               >
                 <CalendarIcon className="size-3.5" aria-hidden="true" />
                 <span>Календарь</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("gantt")}
-                className={`inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${
-                  viewMode === "gantt"
-                    ? "bg-accent text-white shadow-sm"
-                    : "text-ink-muted hover:text-ink"
-                }`}
-                title="Режим диаграммы Ганта"
-              >
-                <GanttChartSquare className="size-3.5" aria-hidden="true" />
-                <span>Гант</span>
               </button>
             </div>
           </div>
@@ -319,12 +305,6 @@ export default function App() {
 
       {viewMode === "calendar" ? (
         <CalendarView
-          timezone={timezone}
-          onSwitchToChat={() => setViewMode("chat")}
-          onEventCompleted={chat.complete}
-        />
-      ) : viewMode === "gantt" ? (
-        <GanttView
           timezone={timezone}
           onSwitchToChat={() => setViewMode("chat")}
           onEventCompleted={chat.complete}
