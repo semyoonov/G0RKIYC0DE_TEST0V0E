@@ -27,18 +27,28 @@ class ScriptedLLM:
         return ChatCompletion(content="Готово.")
 
 
+class RecordingCache:
+    def __init__(self) -> None:
+        self.stored: list[dict] = []
+
+    async def get_history(self, key, limit):
+        return list(self.stored)
+
+    async def push_history(self, key, entry, limit):
+        self.stored.append(dict(entry))
+
+
 @pytest.fixture
 async def user(session):
     return await UserRepository(session).get_or_create(Platform.WEB, "web-reliability")
 
 
-@pytest.mark.parametrize("utterance", ["Поставь встречу с Иваном завтра", "Встреча с командой"])
-async def test_meeting_without_a_time_asks_instead_of_inventing_one(session, user, settings, utterance):
-    executor = ToolExecutor(session, user, settings, None, utterance=utterance)
+async def test_meeting_without_a_named_time_asks_instead_of_inventing_one(session, user, settings):
+    executor = ToolExecutor(session, user, settings, None)
 
     result = await executor.execute(
         "create_meeting",
-        {"title": "с Иваном", "starts_at": "2026-11-01T10:00:00+03:00"},
+        {"title": "с Иваном", "starts_at": "2026-11-01T10:00:00+03:00", "time_named": False},
     )
 
     assert result.failed
@@ -46,44 +56,121 @@ async def test_meeting_without_a_time_asks_instead_of_inventing_one(session, use
     assert result.events == []
 
 
-async def test_meeting_gets_the_weekday_the_user_said_not_the_model(session, user, settings):
-    executor = ToolExecutor(
-        session, user, settings, None, utterance="В четверг в 11 у меня встреча с дизайнером"
-    )
+async def test_meeting_lands_on_the_weekday_the_model_reported(session, user, settings):
+    executor = ToolExecutor(session, user, settings, None)
 
+    # The model proposed Monday; the user said Thursday.
     result = await executor.execute(
         "create_meeting",
-        {"title": "с дизайнером", "starts_at": "2026-11-02T11:00:00+03:00"},  # model said Monday
+        {
+            "title": "с дизайнером",
+            "starts_at": "2026-11-02T11:00:00+03:00",
+            "weekday_named": "четверг",
+            "time_named": True,
+        },
     )
 
     assert not result.failed
     stored = result.events[0].starts_at.astimezone(MOSCOW)
-    assert stored.weekday() == 3  # Thursday
+    assert stored.weekday() == 3
     assert stored.hour == 11
 
 
-async def test_task_keeps_the_named_weekday_and_invents_no_clock_time(session, user, settings):
-    executor = ToolExecutor(session, user, settings, None, utterance="В пятницу нужно отправить отчет")
+async def test_task_with_a_named_day_keeps_no_invented_clock_time(session, user, settings):
+    executor = ToolExecutor(session, user, settings, None)
 
     result = await executor.execute(
         "create_task",
-        {"title": "отправить отчет", "starts_at": "2026-11-03T19:00:00+03:00"},  # model invented Tue 19:00
+        {
+            "title": "отправить отчет",
+            "starts_at": "2026-11-03T19:00:00+03:00",  # model invented Tuesday 19:00
+            "weekday_named": "пятница",
+            "time_named": False,
+        },
     )
 
     assert not result.failed
     stored = result.events[0].starts_at.astimezone(MOSCOW)
-    assert stored.weekday() == 4  # Friday
-    assert (stored.hour, stored.minute) == (23, 59)  # end of that day, not the invented 19:00
+    assert stored.weekday() == 4
+    assert (stored.hour, stored.minute) == (23, 59)
     assert "время не указано" in result.content
 
 
-async def test_reminder_without_a_time_is_not_created(session, user, settings):
-    executor = ToolExecutor(session, user, settings, None, utterance="Напомни позвонить Ивану")
+async def test_reminder_without_a_named_time_is_not_created(session, user, settings):
+    executor = ToolExecutor(session, user, settings, None)
 
-    result = await executor.execute("create_task", {"title": "позвонить Ивану", "is_reminder": True})
+    result = await executor.execute(
+        "create_task",
+        {"title": "позвонить Ивану", "is_reminder": True, "time_named": False},
+    )
 
     assert result.failed
     assert result.events == []
+
+
+async def test_list_reply_is_compact_and_free_of_descriptions(session, user, settings):
+    repository = EventRepository(session)
+    now = datetime.now(MOSCOW)
+    await repository.create(
+        user.id,
+        EventCreate(
+            type=EventType.MEETING,
+            title="встреча с командой",
+            description="Обсудить спринт и релиз",
+            starts_at=now + timedelta(hours=2),
+        ),
+    )
+    await repository.create(
+        user.id,
+        EventCreate(type=EventType.TASK, title="проверить отчёт", starts_at=now + timedelta(hours=3)),
+    )
+    executor = ToolExecutor(session, user, settings, None)
+
+    result = await executor.execute("list_events", {"period": "today"})
+
+    assert not result.failed
+    assert "Обсудить спринт" not in result.content
+    assert "; " in result.content
+
+
+async def test_update_by_query_takes_the_record_the_user_named(session, user, settings):
+    now = datetime.now(MOSCOW)
+    repository = EventRepository(session)
+    target = await repository.create(
+        user.id,
+        EventCreate(type=EventType.MEETING, title="встреча с командой", starts_at=now + timedelta(days=1)),
+    )
+    await repository.create(
+        user.id,
+        EventCreate(type=EventType.MEETING, title="Планёрка команды", starts_at=now + timedelta(days=21)),
+    )
+    executor = ToolExecutor(session, user, settings, None)
+
+    result = await executor.execute(
+        "update_event",
+        {"query": "встреча с командой", "starts_at": "2026-11-01T18:00:00+03:00"},
+    )
+
+    assert not result.failed
+    assert result.events[0].id == target.id
+    assert result.events[0].starts_at.astimezone(MOSCOW).hour == 18
+
+
+async def test_search_prefers_the_nearer_record_when_names_tie(session, user):
+    repository = EventRepository(session)
+    now = datetime.now(MOSCOW)
+    await repository.create(
+        user.id,
+        EventCreate(type=EventType.MEETING, title="встреча с командой", starts_at=now + timedelta(days=1)),
+    )
+    await repository.create(
+        user.id,
+        EventCreate(type=EventType.MEETING, title="Планёрка команды", starts_at=now + timedelta(days=21)),
+    )
+
+    found = await repository.search(user.id, "перенеси встречу с командой на 18:00", limit=3)
+
+    assert found and found[0].title == "встреча с командой"
 
 
 async def test_leaked_tool_call_is_executed_and_removed_from_the_reply(session, user, settings):
@@ -97,28 +184,13 @@ async def test_leaked_tool_call_is_executed_and_removed_from_the_reply(session, 
         ChatCompletion(content=leaked, finish_reason="stop"),
         ChatCompletion(content="Встреча «с командой» создана на завтра в 15:00.", finish_reason="stop"),
     )
-    service = AssistantService(
-        session_factory=_factory(session), settings=settings, llm=llm
-    )
+    service = AssistantService(session_factory=_factory(session), settings=settings, llm=llm)
 
     response = await service.handle_text(Platform.WEB, "web-leak", "Добавь встречу с командой завтра в 15:00")
 
     assert "create_meeting" not in response.text
     assert "<|superquote|>" not in response.text
     assert response.events and response.events[0].type is EventType.MEETING
-    expected_day = (datetime.now(MOSCOW) + timedelta(days=1)).date()
-    assert response.events[0].starts_at.astimezone(MOSCOW).date() == expected_day
-
-
-class RecordingCache:
-    def __init__(self) -> None:
-        self.stored: list[dict] = []
-
-    async def get_history(self, key, limit):
-        return list(self.stored)
-
-    async def push_history(self, key, entry, limit):
-        self.stored.append(dict(entry))
 
 
 async def test_history_never_stores_call_syntax(session, user, settings):
@@ -145,81 +217,6 @@ async def test_off_topic_request_is_refused_without_calling_the_model(settings):
 
     assert "только с задачами" in response.text
     assert llm.calls == []
-
-
-async def test_dated_task_is_not_turned_into_a_reminder(session, user, settings):
-    executor = ToolExecutor(
-        session, user, settings, None, utterance="В пятницу нужно отправить отчет"
-    )
-
-    result = await executor.execute(
-        "create_task", {"title": "отправить отчет", "is_reminder": True}
-    )
-
-    assert not result.failed
-    assert result.events[0].type is EventType.TASK
-
-
-async def test_list_reply_is_compact_and_free_of_descriptions(session, user, settings):
-    repository = EventRepository(session)
-    now = datetime.now(MOSCOW)
-    await repository.create(
-        user.id,
-        EventCreate(
-            type=EventType.MEETING,
-            title="встреча с командой",
-            description="Обсудить спринт и релиз",
-            starts_at=now + timedelta(hours=2),
-        ),
-    )
-    await repository.create(
-        user.id,
-        EventCreate(type=EventType.TASK, title="проверить отчёт", starts_at=now + timedelta(hours=3)),
-    )
-    executor = ToolExecutor(session, user, settings, None, utterance="Что у меня сегодня?")
-
-    result = await executor.execute("list_events", {"period": "today"})
-
-    assert not result.failed
-    assert "Обсудить спринт" not in result.content
-    assert "; " in result.content
-
-
-async def test_update_without_id_uses_the_name_the_user_said(session, user, settings):
-    now = datetime.now(MOSCOW)
-    repository = EventRepository(session)
-    target = await repository.create(
-        user.id,
-        EventCreate(type=EventType.MEETING, title="встреча с командой", starts_at=now + timedelta(days=1)),
-    )
-    await repository.create(
-        user.id,
-        EventCreate(type=EventType.MEETING, title="Планёрка команды", starts_at=now + timedelta(days=21)),
-    )
-    executor = ToolExecutor(session, user, settings, None, utterance="Перенеси встречу с командой на 18:00")
-
-    result = await executor.execute("update_event", {"starts_at": "2026-11-01T18:00:00+03:00"})
-
-    assert not result.failed
-    assert result.events[0].id == target.id
-    assert result.events[0].starts_at.astimezone(MOSCOW).hour == 18
-
-
-async def test_search_prefers_the_nearer_record_when_names_tie(session, user):
-    repository = EventRepository(session)
-    now = datetime.now(MOSCOW)
-    await repository.create(
-        user.id,
-        EventCreate(type=EventType.MEETING, title="встреча с командой", starts_at=now + timedelta(days=1)),
-    )
-    await repository.create(
-        user.id,
-        EventCreate(type=EventType.MEETING, title="Планёрка команды", starts_at=now + timedelta(days=21)),
-    )
-
-    found = await repository.search(user.id, "перенеси встречу с командой на 18:00", limit=3)
-
-    assert found and found[0].title == "встреча с командой"
 
 
 def test_humanize_strips_leaked_syntax():

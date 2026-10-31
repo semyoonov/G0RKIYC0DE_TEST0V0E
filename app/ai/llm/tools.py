@@ -19,6 +19,15 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
+                "weekday_named": {
+                    "type": "string",
+                    "enum": ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"],
+                    "description": "День недели, который пользователь назвал словами. Не заполняй, если дня недели в запросе не было.",
+                },
+                "time_named": {
+                    "type": "boolean",
+                    "description": "true, если пользователь сам назвал время («в 10», «в 15:00», «утра»); false, если время не звучало.",
+                },
                 "title": {
                     "type": "string",
                     "description": (
@@ -51,6 +60,15 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
+                "weekday_named": {
+                    "type": "string",
+                    "enum": ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"],
+                    "description": "День недели, который пользователь назвал словами. Не заполняй, если дня недели в запросе не было.",
+                },
+                "time_named": {
+                    "type": "boolean",
+                    "description": "true, если пользователь сам назвал время («в 10», «в 15:00», «утра»); false, если время не звучало.",
+                },
                 "title": {"type": "string", "description": "С кем или о чём встреча: «с командой», «с дизайнером». Запрещено подставлять общее слово «Встреча» — если название не названо, спроси пользователя, как назвать встречу."},
                 "starts_at": {"type": "string", "description": f"Начало встречи. {_DATETIME_HINT}"},
                 "duration_minutes": {"type": "integer", "description": "Длительность в минутах, если названа."},
@@ -103,6 +121,15 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
+                "weekday_named": {
+                    "type": "string",
+                    "enum": ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"],
+                    "description": "День недели, который пользователь назвал словами. Не заполняй, если дня недели в запросе не было.",
+                },
+                "time_named": {
+                    "type": "boolean",
+                    "description": "true, если пользователь сам назвал время («в 10», «в 15:00», «утра»); false, если время не звучало.",
+                },
                 "event_id": {"type": "integer", "description": "Идентификатор записи из list_events или search_events."},
                 "query": {"type": "string", "description": "Текущее название или ключевые слова записи, если id неизвестен."},
                 "title": {"type": "string", "description": "Новое название."},

@@ -1,15 +1,13 @@
 import json
 from collections.abc import Awaitable, Callable
-import re
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.llm.prompts import format_event_line, format_event_list
-from app.ai.nlp.ru_time import TemporalHint, apply_hint, looks_like_time, parse_temporal
 from app.core.config import Settings
 from app.core.exceptions import AssistantError
 from app.core.logger import get_logger
@@ -24,20 +22,8 @@ from app.services.cache.redis_service import CacheService
 log = get_logger(__name__)
 
 ERROR_PREFIX = "ОШИБКА:"
-_REMINDER_WORD = re.compile(r"напомн|напомин", re.I)
-_CHANGE_VERB = re.compile(
-    r"^\s*(?:пожалуйста[,\s]+)?(?:перенеси|перенести|передвинь|переставь|сдвинь|измени|изменить|"
-    r"поменяй|обнови|переименуй|отметь|удали|убери)\s+",
-    re.I,
-)
-_TIME_TAIL = re.compile(
-    r"\s+(?:на|в|к|до)\s+\d{1,2}(?::\d{2})?|\s+(?:на\s+)?(?:сегодня|завтра|послезавтра|"
-    r"понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)\b.*$",
-    re.I,
-)
 # A day holds a handful of records; a month or "all" must not render a wall of cards.
 LIST_LIMIT = 25
-_ISO_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y")
 _PERIOD_TITLES = {
     Period.TODAY: "сегодня",
     Period.TOMORROW: "завтра",
@@ -45,6 +31,33 @@ _PERIOD_TITLES = {
     Period.ALL: "весь период",
     Period.CUSTOM: "указанный период",
 }
+
+_WEEKDAY_INDEX = {
+    "понедельник": 0,
+    "вторник": 1,
+    "среда": 2,
+    "четверг": 3,
+    "пятница": 4,
+    "суббота": 5,
+    "воскресенье": 6,
+}
+
+
+def _weekday_index(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    return _WEEKDAY_INDEX.get(value.strip().lower())
+
+
+def _align_weekday(moment: datetime | None, index: int | None) -> datetime | None:
+    """The user's weekday decides the date; code only does the arithmetic."""
+    if moment is None or index is None:
+        return moment
+    delta = (index - moment.weekday()) % 7
+    return moment + timedelta(days=delta) if delta else moment
+
+
+_ISO_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y")
 
 
 def parse_datetime(value: Any, tz: ZoneInfo) -> datetime | None:
@@ -95,45 +108,26 @@ class ToolExecutor:
         user: User,
         settings: Settings,
         cache: CacheService | None = None,
-        utterance: str = "",
     ) -> None:
         self._session = session
         self._user = user
         self._settings = settings
         self._cache = cache
         self._events = EventRepository(session)
-        self._utterance = utterance or ""
-        self._hint = parse_temporal(self._utterance, datetime.now(settings.tz), settings.tz)
 
     @property
     def tz(self) -> ZoneInfo:
         return self._settings.tz
 
-    def _user_named_time(self) -> bool:
-        """True when the user's own words contain a clock time.
+    @staticmethod
+    def _time_named(arguments: dict[str, Any]) -> bool:
+        """The model reports whether the user actually named a clock time."""
+        value = arguments.get("time_named")
+        return True if value is None else bool(value)
 
-        A time the model made up must never silence a clarifying question.
-        """
-        if not self._utterance:
-            return True
-        return self._hint.has_time or looks_like_time(self._utterance)
-
-    def _utterance_query(self) -> str:
-        """The record name, taken from the user's words when the model supplied none."""
-        text = _CHANGE_VERB.sub("", self._utterance.strip())
-        text = _TIME_TAIL.sub("", text)
-        return " ".join(text.split()).strip(" .,!?;:")
-
-    def _resolve(self, moment: datetime | None, *, date_only: time | None = None) -> datetime | None:
-        """Overlay the user's date and time on the moment the model proposed."""
-        hint: TemporalHint = self._hint
-        if not hint.applies():
-            return moment
-        if moment is None:
-            if hint.date is None or (hint.time is None and date_only is None):
-                return None
-            return datetime.combine(hint.date, hint.time or date_only, tzinfo=self.tz)
-        return apply_hint(moment, hint)
+    @staticmethod
+    def _date_only(moment: datetime | None) -> datetime | None:
+        return moment.replace(hour=23, minute=59, second=0, microsecond=0) if moment else moment
 
     async def execute(self, name: str, arguments: dict[str, Any] | str) -> ToolResult:
         handler = self._handlers().get(name)
@@ -215,22 +209,19 @@ class ToolExecutor:
     async def _create_task(self, arguments: dict[str, Any]) -> ToolResult:
         title = self._text(arguments.get("title"))
         is_reminder = bool(arguments.get("is_reminder"))
-        if self._utterance and not _REMINDER_WORD.search(self._utterance):
-            # «В пятницу нужно отправить отчет» — задача, даже если модель назвала её напоминанием.
-            is_reminder = False
+        time_named = self._time_named(arguments)
         if self._is_empty_or_generic_task_title(title, is_reminder=is_reminder):
             if is_reminder:
                 return self._error("create_task", "как назвать напоминание? Уточни, о чём напомнить.")
             return self._error("create_task", "как назвать задачу? Уточни, что именно нужно сделать.")
-        model_starts = parse_datetime(arguments.get("starts_at"), self.tz)
-        if self._hint.explicit_date and not self._hint.has_time:
-            # The user named a day only; a clock time the model added is not evidence.
-            model_starts = None
-        starts_at = self._resolve(model_starts, date_only=time(23, 59))
-        remind_at = self._resolve(parse_datetime(arguments.get("remind_at"), self.tz))
+        starts_at = _align_weekday(
+            parse_datetime(arguments.get("starts_at"), self.tz),
+            _weekday_index(arguments.get("weekday_named")),
+        )
+        remind_at = parse_datetime(arguments.get("remind_at"), self.tz)
         event_type = EventType.REMINDER if is_reminder else EventType.TASK
         if is_reminder:
-            if not self._user_named_time():
+            if not time_named:
                 return self._error("create_task", "на какой день и время поставить напоминание?")
             if remind_at is None:
                 remind_at = starts_at
@@ -238,6 +229,8 @@ class ToolExecutor:
                 return self._error("create_task", "на какой день и время поставить напоминание?")
         if starts_at is None and remind_at is not None:
             starts_at = remind_at
+        if not time_named:
+            starts_at = self._date_only(starts_at)
 
         rrule = self._text(arguments.get("rrule"))
         if not rrule:
@@ -271,10 +264,10 @@ class ToolExecutor:
         }
         content = f"{verbs[event_type]} «{title}»"
         if starts_at is not None:
-            if self._hint.has_date and not self._hint.has_time:
-                content += f" — {starts_at.astimezone(self.tz):%d.%m.%Y} (время не указано)"
-            else:
+            if time_named:
                 content += f" — {format_datetime(starts_at, self.tz)}"
+            else:
+                content += f" — {starts_at.astimezone(self.tz):%d.%m.%Y} (время не указано)"
         content += "."
         if remind_at is not None and remind_at != starts_at:
             content += f" Напомню {format_datetime(remind_at, self.tz)}."
@@ -308,9 +301,12 @@ class ToolExecutor:
         title = self._text(arguments.get("title"))
         if self._is_empty_or_generic_meeting_title(title):
             return self._error("create_meeting", "как назвать встречу?")
-        starts_at = self._resolve(parse_datetime(arguments.get("starts_at"), self.tz))
-        if not self._user_named_time():
+        if not self._time_named(arguments):
             return self._error("create_meeting", "на какое время поставить встречу?")
+        starts_at = _align_weekday(
+            parse_datetime(arguments.get("starts_at"), self.tz),
+            _weekday_index(arguments.get("weekday_named")),
+        )
         if starts_at is None:
             return self._error("create_meeting", "на какое время поставить встречу?")
 
@@ -401,8 +397,6 @@ class ToolExecutor:
         event = await self._events.get_for_user(self._user.id, event_id) if event_id else None
         if event is None:
             query = self._text(arguments.get("query")) or self._text(arguments.get("target_title"))
-            if not query and self._utterance:
-                query = self._utterance_query() or None
             if query:
                 candidates = await self._events.search(self._user.id, query, limit=3)
                 if candidates:
@@ -423,11 +417,12 @@ class ToolExecutor:
             payload["rrule"] = self._text(arguments.get("rrule"))
         for field_name in ("starts_at", "remind_at"):
             if field_name in arguments:
-                payload[field_name] = self._resolve(parse_datetime(arguments.get(field_name), self.tz))
-        if self._hint.applies() and "starts_at" in arguments:
-            payload["starts_at"] = self._resolve(payload.get("starts_at") or event.starts_at)
-        elif "starts_at" not in arguments and (self._hint.has_time or self._hint.explicit_date):
-            payload["starts_at"] = self._resolve(event.starts_at)
+                payload[field_name] = parse_datetime(arguments.get(field_name), self.tz)
+        weekday = _weekday_index(arguments.get("weekday_named"))
+        if weekday is not None:
+            anchor = payload.get("starts_at") or event.starts_at
+            if anchor is not None:
+                payload["starts_at"] = _align_weekday(anchor, weekday)
 
         active_rrule = payload.get("rrule") or event.rrule
         if active_rrule:
