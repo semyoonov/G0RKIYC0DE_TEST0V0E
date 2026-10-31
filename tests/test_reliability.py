@@ -160,6 +160,31 @@ async def test_dated_task_is_not_turned_into_a_reminder(session, user, settings)
     assert result.events[0].type is EventType.TASK
 
 
+async def test_list_reply_is_compact_and_free_of_descriptions(session, user, settings):
+    repository = EventRepository(session)
+    now = datetime.now(MOSCOW)
+    await repository.create(
+        user.id,
+        EventCreate(
+            type=EventType.MEETING,
+            title="встреча с командой",
+            description="Обсудить спринт и релиз",
+            starts_at=now + timedelta(hours=2),
+        ),
+    )
+    await repository.create(
+        user.id,
+        EventCreate(type=EventType.TASK, title="проверить отчёт", starts_at=now + timedelta(hours=3)),
+    )
+    executor = ToolExecutor(session, user, settings, None, utterance="Что у меня сегодня?")
+
+    result = await executor.execute("list_events", {"period": "today"})
+
+    assert not result.failed
+    assert "Обсудить спринт" not in result.content
+    assert "; " in result.content
+
+
 async def test_update_without_id_uses_the_name_the_user_said(session, user, settings):
     now = datetime.now(MOSCOW)
     repository = EventRepository(session)

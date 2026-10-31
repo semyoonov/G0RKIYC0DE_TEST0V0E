@@ -391,7 +391,9 @@ class ToolExecutor:
         events = await self._events.search(self._user.id, query, limit=limit)
         if not events:
             return ToolResult("search_events", f"Ничего не нашёл по запросу «{query}».")
-        content = f"Нашёл {len(events)}:\n{format_event_list([to_read(event) for event in events], self.tz)}"
+        content = f"Нашёл {len(events)}: " + format_event_list(
+            [to_read(event) for event in events], self.tz, with_description=False, separator="; "
+        )
         return ToolResult("search_events", content, [to_read(event) for event in events])
 
     async def _update_event(self, arguments: dict[str, Any]) -> ToolResult:
@@ -512,9 +514,11 @@ class ToolExecutor:
             return f"На {label} ничего не запланировано."
         header = f"Записи на {label}:"
         shown = events[:LIST_LIMIT]
-        content = f"{header}\n{format_event_list(shown, self.tz)}"
+        content = f"{header} " + format_event_list(
+            shown, self.tz, with_description=False, separator="; "
+        )
         if len(events) > len(shown):
-            content += f"\n…и ещё {len(events) - len(shown)} записей."
+            content += f". И ещё {len(events) - len(shown)} записей."
         return content
 
     def _cache_key(self, period: Period, start: datetime, end: datetime, types: list[EventType] | None) -> str | None:

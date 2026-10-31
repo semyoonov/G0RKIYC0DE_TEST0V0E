@@ -74,7 +74,13 @@ def build_system_prompt(tz: ZoneInfo, now: datetime | None = None) -> str:
     )
 
 
-def format_event_line(event: EventRead, tz: ZoneInfo, *, with_id: bool = True) -> str:
+def format_event_line(
+    event: EventRead,
+    tz: ZoneInfo,
+    *,
+    with_id: bool = True,
+    with_description: bool = True,
+) -> str:
     if event.starts_at is not None:
         moment = format_datetime(event.starts_at, tz)
     elif event.remind_at is not None:
@@ -89,7 +95,7 @@ def format_event_line(event: EventRead, tz: ZoneInfo, *, with_id: bool = True) -
             line += f" (повтор: {desc_ru})"
     if event.status is EventStatus.DONE:
         line += " (выполнено)"
-    if event.description:
+    if with_description and event.description:
         line += f" ({event.description.splitlines()[0]})"
     if with_id:
         line += f" [id {event.id}]"
@@ -102,7 +108,12 @@ def format_event_list(
     *,
     empty_text: str = "На этот период ничего не запланировано.",
     with_id: bool = True,
+    with_description: bool = True,
+    separator: str = "\n",
 ) -> str:
     if not events:
         return empty_text
-    return "\n".join(format_event_line(event, tz, with_id=with_id) for event in events)
+    return separator.join(
+        format_event_line(event, tz, with_id=with_id, with_description=with_description)
+        for event in events
+    )
